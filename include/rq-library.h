@@ -1,0 +1,139 @@
+/* RaptorQ Library - C API
+ * Generated with cbindgen
+ */
+
+
+#ifndef RAPTORQ_LIB_H
+#define RAPTORQ_LIB_H
+
+/* Generated with cbindgen:0.28.0 */
+
+#include <stdint.h>
+#include <stdbool.h>
+
+#ifdef __cplusplus
+namespace RaptorQ {
+#endif  // __cplusplus
+
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
+
+/**
+ * Initializes a RaptorQ session with the given configuration
+ * Returns a session ID on success, or 0 on failure
+ */
+uintptr_t raptorq_init_session(uint16_t symbol_size,
+                               uint8_t redundancy_factor,
+                               uint32_t max_memory_mb,
+                               uint32_t concurrency_limit);
+
+/**
+ * Frees a RaptorQ session
+ */
+bool raptorq_free_session(uintptr_t session_id);
+
+/**
+ * Encodes a file using RaptorQ - streaming implementation
+ *
+ * Arguments:
+ * * `session_id` - Session ID returned from raptorq_init_session
+ * * `input_path` - Path to the input file
+ * * `output_dir` - Directory where symbols will be written
+ * * `chunk_size` - Size of chunks to process at once (0 = auto)
+ * * `result_buffer` - Buffer to store the result (JSON metadata)
+ * * `result_buffer_len` - Length of the result buffer
+ *
+ * Returns:
+ * * 0 on success
+ * * -1 on generic error
+ * * -2 on file not found
+ * * -3 on encoding failure
+ * * -4 on invalid session
+ * * -5 on memory allocation error
+ */
+int32_t raptorq_encode_file(uintptr_t session_id,
+                            const char *input_path,
+                            const char *output_dir,
+                            uintptr_t chunk_size,
+                            char *result_buffer,
+                            uintptr_t result_buffer_len);
+
+/**
+ * Gets the last error message from the processor
+ *
+ * Arguments:
+ * * `session_id` - Session ID returned from raptorq_init_session
+ * * `error_buffer` - Buffer to store the error message
+ * * `error_buffer_len` - Length of the error buffer
+ *
+ * Returns:
+ * * 0 on success
+ * * -1 on error
+ */
+int32_t raptorq_get_last_error(uintptr_t session_id,
+                               char *error_buffer,
+                               uintptr_t error_buffer_len);
+
+/**
+ * Decodes RaptorQ symbols back to the original file
+ *
+ * Arguments:
+ * * `session_id` - Session ID returned from raptorq_init_session
+ * * `symbols_dir` - Directory containing the symbols
+ * * `output_path` - Path where the decoded file will be written
+ * * `encoder_params` - Encoder parameters (12 bytes)
+ * * `encoder_params_len` - Length of encoder parameters
+ *
+ * Returns:
+ * * 0 on success
+ * * -1 on generic error
+ * * -2 on file not found
+ * * -3 on decoding failure
+ * * -4 on invalid session
+ */
+int32_t raptorq_decode_symbols(uintptr_t session_id,
+                               const char *symbols_dir,
+                               const char *output_path,
+                               const uint8_t *encoder_params,
+                               uintptr_t encoder_params_len);
+
+/**
+ * Gets a recommended chunk size based on file size and available memory
+ *
+ * Arguments:
+ * * `session_id` - Session ID returned from raptorq_init_session
+ * * `file_size` - Size of the file to process
+ *
+ * Returns:
+ * * Recommended chunk size in bytes
+ * * 0 if it should not chunk or on error
+ */
+uintptr_t raptorq_get_recommended_chunk_size(uintptr_t session_id, uint64_t file_size);
+
+/**
+ * Version information
+ */
+int32_t raptorq_version(char *version_buffer, uintptr_t version_buffer_len);
+
+extern void log(const raptorqstr *s);
+
+extern raptorqPromise read_file(const raptorqFileSystem *this_, const raptorqstr *path);
+
+extern raptorqPromise write_file(const raptorqFileSystem *this_,
+                                 const raptorqstr *path,
+                                 const raptorqUint8Array *data);
+
+extern raptorqPromise mkdir(const raptorqFileSystem *this_, const raptorqstr *path);
+
+extern raptorqPromise stat(const raptorqFileSystem *this_, const raptorqstr *path);
+
+#ifdef __cplusplus
+}  // extern "C"
+#endif  // __cplusplus
+
+#ifdef __cplusplus
+}  // namespace RaptorQ
+#endif  // __cplusplus
+
+#endif  /* RAPTORQ_LIB_H */
