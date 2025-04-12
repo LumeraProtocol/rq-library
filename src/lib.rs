@@ -1,9 +1,11 @@
-mod processor;
+pub mod processor;
 mod platform;
+
+// Re-export key types for simpler imports
+pub use processor::{ProcessorConfig, RaptorQProcessor, ProcessResult, ProcessError};
 
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use processor::{ProcessorConfig, RaptorQProcessor, ProcessError};
 use std::collections::HashMap;
 use std::ffi::{c_char, CStr, CString};
 use std::ptr;
@@ -198,8 +200,7 @@ pub extern "C" fn raptorq_get_last_error(
 /// * `session_id` - Session ID returned from raptorq_init_session
 /// * `symbols_dir` - Directory containing the symbols
 /// * `output_path` - Path where the decoded file will be written
-/// * `encoder_params` - Encoder parameters (12 bytes)
-/// * `encoder_params_len` - Length of encoder parameters
+/// * `layout_path` - Path to the layout file (containing encoder parameters and chunk information)
 ///
 /// Returns:
 /// * 0 on success
@@ -212,15 +213,10 @@ pub extern "C" fn raptorq_decode_symbols(
     session_id: usize,
     symbols_dir: *const c_char,
     output_path: *const c_char,
-    encoder_params: *const u8,
-    encoder_params_len: usize,
+    layout_path: *const c_char,
 ) -> i32 {
     // Basic null pointer checks
-    if symbols_dir.is_null() || output_path.is_null() || encoder_params.is_null() {
-        return -1;
-    }
-
-    if encoder_params_len != 12 {
+    if symbols_dir.is_null() || output_path.is_null() || layout_path.is_null() {
         return -1;
     }
 
@@ -234,11 +230,10 @@ pub extern "C" fn raptorq_decode_symbols(
         Err(_) => return -1,
     };
 
-    // Copy encoder params
-    let mut params = [0u8; 12];
-    unsafe {
-        ptr::copy_nonoverlapping(encoder_params, params.as_mut_ptr(), 12);
-    }
+    let layout_path_str = match unsafe { CStr::from_ptr(layout_path) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
 
     let processors = PROCESSORS.lock();
     let processor = match processors.get(&session_id) {
@@ -246,7 +241,7 @@ pub extern "C" fn raptorq_decode_symbols(
         None => return -4,
     };
 
-    match processor.decode_symbols(symbols_dir_str, output_path_str, &params) {
+    match processor.decode_symbols(symbols_dir_str, output_path_str, layout_path_str) {
         Ok(_) => 0,
         Err(e) => match e {
             ProcessError::FileNotFound(_) => -2,
@@ -798,13 +793,11 @@ mod ffi_tests {
             let session_id = init_test_session();
             
             // Test with null symbols_dir
-            let encoder_params = [0u8; 12];
             let result = raptorq_decode_symbols(
                 session_id,
                 ptr::null(),
                 CString::new("output.txt").unwrap().as_ptr(),
-                encoder_params.as_ptr(),
-                encoder_params.len(),
+                CString::new("layout.json").unwrap().as_ptr(),
             );
             assert_eq!(result, -1, "Null symbols_dir should return -1");
             
@@ -813,20 +806,18 @@ mod ffi_tests {
                 session_id,
                 CString::new("symbols").unwrap().as_ptr(),
                 ptr::null(),
-                encoder_params.as_ptr(),
-                encoder_params.len(),
+                CString::new("layout.json").unwrap().as_ptr(),
             );
             assert_eq!(result, -1, "Null output_path should return -1");
             
-            // Test with null encoder_params
+            // Test with null layout_path
             let result = raptorq_decode_symbols(
                 session_id,
                 CString::new("symbols").unwrap().as_ptr(),
                 CString::new("output.txt").unwrap().as_ptr(),
                 ptr::null(),
-                12,
             );
-            assert_eq!(result, -1, "Null encoder_params should return -1");
+            assert_eq!(result, -1, "Null layout_path should return -1");
             
             // Clean up
             raptorq_free_session(session_id);
@@ -835,33 +826,36 @@ mod ffi_tests {
         #[test]
         fn test_ffi_decode_invalid_session() {
             let invalid_session_id = 99999;
-            let encoder_params = [0u8; 12];
             
             let result = raptorq_decode_symbols(
                 invalid_session_id,
                 CString::new("symbols").unwrap().as_ptr(),
                 CString::new("output.txt").unwrap().as_ptr(),
-                encoder_params.as_ptr(),
-                encoder_params.len(),
+                CString::new("layout.json").unwrap().as_ptr(),
             );
             
             assert_eq!(result, -4, "Invalid session ID should return -4");
         }
     
         #[test]
-        fn test_ffi_decode_invalid_params_len() {
+        fn test_ffi_decode_layout_file_not_found() {
             let session_id = init_test_session();
-            let encoder_params = [0u8; 10]; // Wrong length, should be 12
+            let temp_dir = tempdir().expect("Failed to create temp directory");
+            
+            // Valid symbols directory but non-existent layout file
+            let symbols_dir = temp_dir.path();
+            let output_path = temp_dir.path().join("output.txt");
+            let layout_path = temp_dir.path().join("nonexistent_layout.json");
             
             let result = raptorq_decode_symbols(
                 session_id,
-                CString::new("symbols").unwrap().as_ptr(),
-                CString::new("output.txt").unwrap().as_ptr(),
-                encoder_params.as_ptr(),
-                encoder_params.len(),
+                CString::new(symbols_dir.to_string_lossy().as_ref()).unwrap().as_ptr(),
+                CString::new(output_path.to_string_lossy().as_ref()).unwrap().as_ptr(),
+                CString::new(layout_path.to_string_lossy().as_ref()).unwrap().as_ptr(),
             );
             
-            assert_eq!(result, -1, "Invalid encoder_params_len should return -1");
+            // Should return -2 for file not found or -3 for decoding failed
+            assert!(result == -2 || result == -3, "Layout file not found should return -2 or -3");
             
             // Clean up
             raptorq_free_session(session_id);
@@ -905,21 +899,15 @@ mod ffi_tests {
             if encode_result == 0 {
                 // Encoding succeeded, now try decoding
                 
-                // Parse the encoder parameters from the JSON result
-                let result_json = buffer_as_string(result_buffer.as_ptr() as *const c_char, result_buffer.len());
-                let _parsed: serde_json::Value = serde_json::from_str(&result_json)
-                    .expect("Result buffer should contain valid JSON");
-                
-                // In a real scenario, we'd extract actual encoder parameters from the JSON
-                // For this test, we'll use placeholder values
-                let encoder_params = [0u8; 12];
+                // Get the path to the layout file (should be in symbols_dir)
+                let layout_path = symbols_dir.join("_raptorq_layout.json");
+                assert!(layout_path.exists(), "Layout file should exist after encoding");
                 
                 let decode_result = raptorq_decode_symbols(
                     session_id,
                     CString::new(symbols_dir.to_string_lossy().as_ref()).unwrap().as_ptr(),
                     CString::new(output_path.to_string_lossy().as_ref()).unwrap().as_ptr(),
-                    encoder_params.as_ptr(),
-                    encoder_params.len(),
+                    CString::new(layout_path.to_string_lossy().as_ref()).unwrap().as_ptr(),
                 );
                 
                 // Ideally, this would return 0 (success)
@@ -945,14 +933,13 @@ mod ffi_tests {
             // Non-existent symbols directory
             let symbols_dir = temp_dir.path().join("nonexistent_symbols");
             let output_path = temp_dir.path().join("decoded.txt");
-            let encoder_params = [0u8; 12];
+            let layout_path = temp_dir.path().join("layout.json");
             
             let result = raptorq_decode_symbols(
                 session_id,
                 CString::new(symbols_dir.to_string_lossy().as_ref()).unwrap().as_ptr(),
                 CString::new(output_path.to_string_lossy().as_ref()).unwrap().as_ptr(),
-                encoder_params.as_ptr(),
-                encoder_params.len(),
+                CString::new(layout_path.to_string_lossy().as_ref()).unwrap().as_ptr(),
             );
             
             assert_eq!(result, -2, "File not found should return -2");
@@ -982,14 +969,16 @@ mod ffi_tests {
             fs::create_dir_all(&symbols_dir).expect("Failed to create empty symbols directory");
             
             let output_path = temp_dir.path().join("decoded.txt");
-            let encoder_params = [0u8; 12];
+            
+            // Create an empty layout file that won't have valid content
+            let layout_path = temp_dir.path().join("empty_layout.json");
+            File::create(&layout_path).expect("Failed to create empty layout file");
             
             let result = raptorq_decode_symbols(
                 session_id,
                 CString::new(symbols_dir.to_string_lossy().as_ref()).unwrap().as_ptr(),
                 CString::new(output_path.to_string_lossy().as_ref()).unwrap().as_ptr(),
-                encoder_params.as_ptr(),
-                encoder_params.len(),
+                CString::new(layout_path.to_string_lossy().as_ref()).unwrap().as_ptr(),
             );
             
             // Expect -3 for decoding failure, but other values are possible depending on implementation
@@ -1013,7 +1002,6 @@ mod ffi_tests {
         #[test]
         fn test_ffi_decode_path_conversion_error() {
             let session_id = init_test_session();
-            let encoder_params = [0u8; 12];
             
             // Use extremely long path that might fail in CString::new
             let very_long_path = "a".repeat(100000);
@@ -1022,8 +1010,7 @@ mod ffi_tests {
                 session_id,
                 CString::new(very_long_path.clone()).unwrap_or(CString::new("x").unwrap()).as_ptr(),
                 CString::new("output.txt").unwrap().as_ptr(),
-                encoder_params.as_ptr(),
-                encoder_params.len(),
+                CString::new("layout.json").unwrap().as_ptr(),
             );
             
             // Expect -1 if path conversion failed, but other values are possible

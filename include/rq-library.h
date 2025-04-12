@@ -82,8 +82,7 @@ int32_t raptorq_get_last_error(uintptr_t session_id,
  * * `session_id` - Session ID returned from raptorq_init_session
  * * `symbols_dir` - Directory containing the symbols
  * * `output_path` - Path where the decoded file will be written
- * * `encoder_params` - Encoder parameters (12 bytes)
- * * `encoder_params_len` - Length of encoder parameters
+ * * `layout_path` - Path to the layout file (containing encoder parameters and chunk information)
  *
  * Returns:
  * * 0 on success
@@ -95,8 +94,7 @@ int32_t raptorq_get_last_error(uintptr_t session_id,
 int32_t raptorq_decode_symbols(uintptr_t session_id,
                                const char *symbols_dir,
                                const char *output_path,
-                               const uint8_t *encoder_params,
-                               uintptr_t encoder_params_len);
+                               const char *layout_path);
 
 /**
  * Gets a recommended chunk size based on file size and available memory

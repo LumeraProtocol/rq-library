@@ -50,7 +50,7 @@ pub struct RaptorQLayout {
 }
 
 /// Information about a single chunk in a chunked file.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChunkLayout {
     /// Identifier for the chunk (e.g., "chunk_0", "chunk_1").
     pub chunk_id: String,
@@ -502,7 +502,141 @@ impl RaptorQProcessor {
         Ok((encoder.get_config().serialize().to_vec(), symbol_ids))
     }
 
+    /// Decode RaptorQ symbols to recreate the original file, using a layout file path
+    ///
+    /// This function reads the RaptorQ layout information from the specified file path,
+    /// which contains encoding parameters and chunk metadata (if the file was chunked).
+    ///
+    /// # Arguments
+    ///
+    /// * `symbols_dir` - Path to the directory containing the symbol files
+    /// * `output_path` - Path where the decoded file will be written
+    /// * `layout_path` - Path to the layout JSON file that contains encoding parameters and chunk information
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` on successful decoding
+    /// * `Err(ProcessError)` on error (e.g., file not found, decoding failed)
     pub fn decode_symbols(
+        &self,
+        symbols_dir: &str,
+        output_path: &str,
+        layout_path: &str,
+    ) -> Result<(), ProcessError> {
+        // Check if we can take another task
+        if !self.can_start_task() {
+            return Err(ProcessError::ConcurrencyLimitReached);
+        }
+
+        let _guard = TaskGuard::new(&self.active_tasks);
+
+        // Load and parse layout file
+        let layout_path = Path::new(layout_path);
+        if !layout_path.exists() {
+            let err = format!("Layout file not found: {:?}", layout_path);
+            self.set_last_error(err.clone());
+            return Err(ProcessError::FileNotFound(err));
+        }
+
+        let layout_content = match fs::read_to_string(layout_path) {
+            Ok(content) => content,
+            Err(e) => {
+                let err = format!("Failed to read layout file: {}", e);
+                self.set_last_error(err.clone());
+                return Err(ProcessError::DecodingFailed(err));
+            }
+        };
+
+        let layout = match serde_json::from_str::<RaptorQLayout>(&layout_content) {
+            Ok(layout) => layout,
+            Err(e) => {
+                let err = format!("Failed to parse layout file: {}", e);
+                self.set_last_error(err.clone());
+                return Err(ProcessError::DecodingFailed(err));
+            }
+        };
+
+        // Now that we have the layout, delegate to decode_symbols_with_layout
+        self.decode_symbols_with_layout(symbols_dir, output_path, &layout)
+    }
+
+    /// Decode RaptorQ symbols to recreate the original file, using a RaptorQLayout object
+    ///
+    /// This function uses the provided RaptorQLayout structure which contains
+    /// encoding parameters and chunk metadata (if the file was chunked).
+    ///
+    /// # Arguments
+    ///
+    /// * `symbols_dir` - Path to the directory containing the symbol files
+    /// * `output_path` - Path where the decoded file will be written
+    /// * `layout` - The RaptorQLayout object containing encoding parameters and chunk information
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` on successful decoding
+    /// * `Err(ProcessError)` on error (e.g., file not found, decoding failed)
+    pub fn decode_symbols_with_layout(
+        &self,
+        symbols_dir: &str,
+        output_path: &str,
+        layout: &RaptorQLayout,
+    ) -> Result<(), ProcessError> {
+        let symbols_dir = Path::new(symbols_dir);
+        if !symbols_dir.exists() {
+            let err = format!("Symbols directory not found: {:?}", symbols_dir);
+            self.set_last_error(err.clone());
+            return Err(ProcessError::FileNotFound(err));
+        }
+
+        // Verify we have valid encoder parameters in the layout
+        if layout.encoder_parameters.len() < 12 {
+            let err = "Invalid encoder parameters in layout (less than 12 bytes)".to_string();
+            self.set_last_error(err.clone());
+            return Err(ProcessError::DecodingFailed(err));
+        }
+
+        // Extract encoder parameters from layout
+        let mut encoder_params = [0u8; 12];
+        encoder_params.copy_from_slice(&layout.encoder_parameters[0..12]);
+
+        // Check if this is a chunked file
+        let mut chunks = Vec::new();
+        for entry in fs::read_dir(symbols_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() && path.file_name().unwrap().to_string_lossy().starts_with("chunk_") {
+                chunks.push(path);
+            }
+        }
+
+        // Determine if we have a chunked file and use the appropriate decoding method
+        if chunks.is_empty() {
+            // No chunks, decode as a single file
+            self.decode_single_file_internal(symbols_dir, output_path, &encoder_params, layout.symbols.as_ref())
+        } else {
+            // Decode each chunk and combine if we have chunk layouts
+            if let Some(chunk_layouts) = &layout.chunks {
+                if !chunk_layouts.is_empty() {
+                    debug!("Using layout with {} chunk layouts for decoding", chunk_layouts.len());
+                    self.decode_chunked_file_with_layout(&chunks, output_path, layout)
+                } else {
+                    // Layout exists but has empty chunks array
+                    debug!("Layout file exists but has empty chunks array, using basic chunked decoding");
+                    self.decode_chunked_file_internal(&chunks, output_path, &encoder_params)
+                }
+            } else {
+                // Layout exists but has no chunks field
+                debug!("Layout file exists but has no chunks field, using basic chunked decoding");
+                self.decode_chunked_file_internal(&chunks, output_path, &encoder_params)
+            }
+        }
+    }
+
+    /// Decode symbols using an encoder_params array (backward compatibility for tests)
+    ///
+    /// This is a compatibility wrapper for the old API signature that works with the
+    /// signature used by the tests.
+    pub fn decode_symbols_with_params(
         &self,
         symbols_dir: &str,
         output_path: &str,
@@ -515,44 +649,16 @@ impl RaptorQProcessor {
 
         let _guard = TaskGuard::new(&self.active_tasks);
 
-        let symbols_dir = Path::new(symbols_dir);
-        if !symbols_dir.exists() {
-            let err = format!("Symbols directory not found: {:?}", symbols_dir);
+        let symbols_dir_path = Path::new(symbols_dir);
+        if !symbols_dir_path.exists() {
+            let err = format!("Symbols directory not found: {:?}", symbols_dir_path);
             self.set_last_error(err.clone());
             return Err(ProcessError::FileNotFound(err));
         }
 
-        // Try to load the layout file
-        let layout_path = symbols_dir.join(LAYOUT_FILENAME);
-        let layout = if layout_path.exists() {
-            let layout_content = match fs::read_to_string(&layout_path) {
-                Ok(content) => content,
-                Err(e) => {
-                    let err = format!("Failed to read layout file: {}", e);
-                    self.set_last_error(err.clone());
-                    return Err(ProcessError::DecodingFailed(err));
-                }
-            };
-
-            match serde_json::from_str::<RaptorQLayout>(&layout_content) {
-                Ok(layout) => {
-                    debug!("Found and loaded layout file at {:?}", layout_path);
-                    Some(layout)
-                },
-                Err(e) => {
-                    let err = format!("Failed to parse layout file: {}", e);
-                    self.set_last_error(err.clone());
-                    return Err(ProcessError::DecodingFailed(err));
-                }
-            }
-        } else {
-            debug!("No layout file found at {:?}, falling back to older decoding method", layout_path);
-            None
-        };
-
         // Check if this is a chunked file
         let mut chunks = Vec::new();
-        for entry in fs::read_dir(symbols_dir)? {
+        for entry in fs::read_dir(symbols_dir_path)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_dir() && path.file_name().unwrap().to_string_lossy().starts_with("chunk_") {
@@ -560,55 +666,22 @@ impl RaptorQProcessor {
             }
         }
 
-        // Use layout information if available, otherwise fallback to older method
         if chunks.is_empty() {
             // No chunks, decode as a single file
-            if let Some(layout) = layout {
-                // Use layout file's encoder parameters
-                let mut layout_encoder_params = [0u8; 12];
-                if layout.encoder_parameters.len() >= 12 {
-                    layout_encoder_params.copy_from_slice(&layout.encoder_parameters[0..12]);
-                    self.decode_single_file(symbols_dir, output_path, &layout_encoder_params)
-                } else {
-                    // Fallback to provided params if layout has invalid params
-                    self.decode_single_file(symbols_dir, output_path, encoder_params)
-                }
-            } else {
-                // No layout, use provided encoder params
-                self.decode_single_file(symbols_dir, output_path, encoder_params)
-            }
+            self.decode_single_file_internal(symbols_dir_path, output_path, encoder_params, None)
         } else {
-            // Decode each chunk and combine
-            if let Some(layout) = layout {
-                if let Some(chunk_layouts) = &layout.chunks {
-                    if !chunk_layouts.is_empty() {
-                        // We have chunk layout information
-                        debug!("Using layout file with {} chunk layouts for decoding", chunk_layouts.len());
-                        return self.decode_chunked_file_with_layout(&chunks, output_path, &layout);
-                    }
-                }
-                
-                // Layout exists but doesn't have valid chunk info
-                let mut layout_encoder_params = [0u8; 12];
-                if layout.encoder_parameters.len() >= 12 {
-                    layout_encoder_params.copy_from_slice(&layout.encoder_parameters[0..12]);
-                    self.decode_chunked_file(&chunks, output_path, &layout_encoder_params)
-                } else {
-                    self.decode_chunked_file(&chunks, output_path, encoder_params)
-                }
-            } else {
-                // No layout file, use older method
-                debug!("No layout information available, using legacy decoding method");
-                self.decode_chunked_file(&chunks, output_path, encoder_params)
-            }
+            // Chunked file, use the chunked decoding method
+            self.decode_chunked_file_internal(&chunks, output_path, encoder_params)
         }
     }
 
-    fn decode_single_file(
+    /// Internal function to decode a single (non-chunked) file
+    fn decode_single_file_internal(
         &self,
         symbols_dir: &Path,
         output_path: &str,
         encoder_params: &[u8; 12],
+        symbol_ids: Option<&Vec<String>>,
     ) -> Result<(), ProcessError> {
         debug!("Decoding single file from {:?} to {:?}", symbols_dir, output_path);
 
@@ -616,8 +689,14 @@ impl RaptorQProcessor {
         let config = ObjectTransmissionInformation::deserialize(encoder_params);
         let decoder = Decoder::new(config);
 
-        // Read symbol files
-        let symbol_files = self.read_symbol_files(symbols_dir)?;
+        // Read symbol files, prioritizing the provided symbol_ids if available
+        let symbol_files = if let Some(ids) = symbol_ids {
+            // Read specific symbols listed in layout
+            self.read_specific_symbol_files(symbols_dir, ids)?
+        } else {
+            // Fall back to reading all symbol files in directory
+            self.read_symbol_files(symbols_dir)?
+        };
 
         let output_file = BufWriter::new(File::create(output_path)?);
 
@@ -625,7 +704,8 @@ impl RaptorQProcessor {
         self.decode_symbols_to_file(decoder, symbol_files, output_file)
     }
 
-    fn decode_chunked_file(
+    /// Internal function to decode a chunked file without detailed layout information
+    fn decode_chunked_file_internal(
         &self,
         chunks: &[PathBuf],
         output_path: &str,
@@ -812,31 +892,68 @@ impl RaptorQProcessor {
 
         Ok(())
     }
+/// Read all symbol files from a directory
+fn read_symbol_files(&self, dir: &Path) -> Result<Vec<Vec<u8>>, ProcessError> {
+    let mut symbol_files = Vec::new();
 
-    fn read_symbol_files(&self, dir: &Path) -> Result<Vec<Vec<u8>>, ProcessError> {
-        let mut symbol_files = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
 
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
+        if path.is_file() && path.file_name().unwrap_or_default() != LAYOUT_FILENAME {
+            // Read symbol file
+            let mut symbol_data = Vec::new();
+            let mut file = File::open(&path)?;
+            file.read_to_end(&mut symbol_data)?;
 
-            if path.is_file() {
-                // Read symbol file
-                let mut symbol_data = Vec::new();
-                let mut file = File::open(&path)?;
-                file.read_to_end(&mut symbol_data)?;
+            symbol_files.push(symbol_data);
+        }
+    }
 
-                symbol_files.push(symbol_data);
+    if symbol_files.is_empty() {
+        let err = format!("No symbol files found in {:?}", dir);
+        self.set_last_error(err.clone());
+        return Err(ProcessError::DecodingFailed(err));
+    }
+
+    Ok(symbol_files)
+}
+
+/// Read specific symbol files by ID from a directory
+fn read_specific_symbol_files(&self, dir: &Path, symbol_ids: &[String]) -> Result<Vec<Vec<u8>>, ProcessError> {
+    let mut symbol_files = Vec::new();
+
+    for symbol_id in symbol_ids {
+        let symbol_path = dir.join(symbol_id);
+        if !symbol_path.exists() {
+            debug!("Symbol file not found: {:?}, skipping", symbol_path);
+            continue;
+        }
+
+        let mut symbol_data = Vec::new();
+        match File::open(&symbol_path) {
+            Ok(mut file) => {
+                if let Err(e) = file.read_to_end(&mut symbol_data) {
+                    debug!("Failed to read symbol file {:?}: {}", symbol_path, e);
+                    continue;
+                }
+            },
+            Err(e) => {
+                debug!("Failed to open symbol file {:?}: {}", symbol_path, e);
+                continue;
             }
         }
 
-        if symbol_files.is_empty() {
-            let err = format!("No symbol files found in {:?}", dir);
-            self.set_last_error(err.clone());
-            return Err(ProcessError::DecodingFailed(err));
-        }
+        symbol_files.push(symbol_data);
+    }
 
-        Ok(symbol_files)
+    if symbol_files.is_empty() {
+        let err = format!("No valid symbol files found from the provided IDs in {:?}", dir);
+        self.set_last_error(err.clone());
+        return Err(ProcessError::DecodingFailed(err));
+    }
+
+    Ok(symbol_files)
     }
 
     // Helper function to safely attempt decoding a packet without panicking
@@ -987,6 +1104,7 @@ impl<'a> Drop for TaskGuard<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use super::*;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1585,10 +1703,10 @@ mod tests {
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
         let config = ObjectTransmissionInformation::with_defaults(1024, 128);
         let encoder_params_vec = config.serialize().to_vec();
-        let mut encoder_params = [0; 12]; 
+        let mut encoder_params = [0; 12];
         encoder_params.copy_from_slice(&encoder_params_vec);
 
-        let result = processor.decode_symbols(
+        let result = processor.decode_symbols_with_params(
             "non_existent_dir",
             "output.bin",
             &encoder_params
@@ -1612,7 +1730,7 @@ mod tests {
         let mut encoder_params = [0; 12]; 
         encoder_params.copy_from_slice(&encoder_params_vec);
 
-        let result = processor.decode_symbols(
+        let result = processor.decode_symbols_with_params(
             symbols_dir.to_str().unwrap(),
             output_path.to_str().unwrap(),
             &encoder_params
@@ -1646,14 +1764,23 @@ mod tests {
         // Create symbol files
         create_symbol_files(&symbols_dir, &packets).expect("Failed to create symbol files");
         
+        // Create layout file
+        let layout_path = symbols_dir.join(LAYOUT_FILENAME);
+        let layout = RaptorQLayout {
+            encoder_parameters: encoder_params.to_vec(),
+            chunks: None,
+            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+        };
+        
+        let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
+        fs::write(&layout_path, layout_json).expect("Failed to write layout file");
+        
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let mut encoder_params_array = [0; 12];
-        encoder_params_array.copy_from_slice(&encoder_params);
         
         let result = processor.decode_symbols(
             symbols_dir.to_str().unwrap(),
             output_path.to_str().unwrap(),
-            &encoder_params_array
+            layout_path.to_str().unwrap()
         );
         
         assert!(result.is_ok());
@@ -1681,6 +1808,7 @@ mod tests {
         // Split into chunks (3 chunks of 100KB each)
         let chunk_size = 100 * 1024;
         let mut encoder_params = Vec::new();
+        let mut chunk_layouts = Vec::with_capacity(3);
         
         for i in 0..3 {
             let chunk_dir = symbols_dir.join(format!("chunk_{}", i));
@@ -1704,16 +1832,35 @@ mod tests {
             
             // Create symbol files for this chunk
             create_symbol_files(&chunk_dir, &packets).expect("Failed to create symbol files");
+
+        // Create layout file with chunk information
+        let chunk_id = format!("chunk_{}", i);
+            let chunk_layout = ChunkLayout {
+                chunk_id,
+                original_offset: (i * chunk_size) as u64,
+                size: chunk_size as u64,
+                symbols: (0..packets.len()).map(|j| format!("symbol_{}.bin", j)).collect(),
+            };
+            chunk_layouts.push(chunk_layout);
         }
         
+        let layout = RaptorQLayout {
+            encoder_parameters: encoder_params.to_vec(),
+            chunks: Some(chunk_layouts),
+            symbols: None,
+        };
+        
+        // Save layout file
+        let layout_path = symbols_dir.join(LAYOUT_FILENAME);
+        let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
+        fs::write(&layout_path, layout_json).expect("Failed to write layout file");
+        
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let mut encoder_params_array = [0; 12];
-        encoder_params_array.copy_from_slice(&encoder_params);
         
         let result = processor.decode_symbols(
             symbols_dir.to_str().unwrap(),
             output_path.to_str().unwrap(),
-            &encoder_params_array
+            layout_path.to_str().unwrap()
         );
         
         assert!(result.is_ok());
@@ -1754,14 +1901,23 @@ mod tests {
         // Create symbol files
         create_symbol_files(&symbols_dir, &packets).expect("Failed to create symbol files");
         
+        // Create and save layout file
+        let layout_path = symbols_dir.join(LAYOUT_FILENAME);
+        let layout = RaptorQLayout {
+            encoder_parameters: encoder_params.to_vec(),
+            chunks: None,
+            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+        };
+        
+        let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
+        fs::write(&layout_path, layout_json).expect("Failed to write layout file");
+        
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let mut encoder_params_array = [0; 12];
-        encoder_params_array.copy_from_slice(&encoder_params);
         
         let result = processor.decode_symbols(
             symbols_dir.to_str().unwrap(),
             output_path.to_str().unwrap(),
-            &encoder_params_array
+            layout_path.to_str().unwrap()
         );
         
         assert!(matches!(result, Err(ProcessError::DecodingFailed(_))));
@@ -1810,14 +1966,23 @@ mod tests {
         // Create symbol files
         create_symbol_files(&symbols_dir, &packets).expect("Failed to create symbol files");
         
+        // Create and save layout file
+        let layout_path = symbols_dir.join(LAYOUT_FILENAME);
+        let layout = RaptorQLayout {
+            encoder_parameters: encoder_params.to_vec(),
+            chunks: None,
+            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+        };
+        
+        let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
+        fs::write(&layout_path, layout_json).expect("Failed to write layout file");
+        
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let mut encoder_params_array = [0; 12];
-        encoder_params_array.copy_from_slice(&encoder_params);
         
         let result = processor.decode_symbols(
             symbols_dir.to_str().unwrap(),
             output_path.to_str().unwrap(),
-            &encoder_params_array
+            layout_path.to_str().unwrap()
         );
         
         // It might NOT fail
@@ -1856,10 +2021,21 @@ mod tests {
         // Use invalid encoder params
         let invalid_params = [255; 12]; // Completely invalid params
         
+        // Create layout file with invalid parameters
+        let layout_path = symbols_dir.join(LAYOUT_FILENAME);
+        let layout = RaptorQLayout {
+            encoder_parameters: invalid_params.to_vec(),
+            chunks: None,
+            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+        };
+        
+        let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
+        fs::write(&layout_path, layout_json).expect("Failed to write layout file");
+        
         let result = processor.decode_symbols(
             symbols_dir.to_str().unwrap(),
             output_path.to_str().unwrap(),
-            &invalid_params
+            layout_path.to_str().unwrap()
         );
         
         assert!(matches!(result, Err(ProcessError::DecodingFailed(_))));
@@ -1899,14 +2075,22 @@ mod tests {
         // Manually increment active_tasks to simulate a running task
         processor.active_tasks.fetch_add(1, Ordering::SeqCst);
         
-        let mut encoder_params_array = [0; 12];
-        encoder_params_array.copy_from_slice(&encoder_params);
+        // Create layout file
+        let layout_path = symbols_dir.join(LAYOUT_FILENAME);
+        let layout = RaptorQLayout {
+            encoder_parameters: encoder_params.to_vec(),
+            chunks: None,
+            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+        };
+        
+        let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
+        fs::write(&layout_path, layout_json).expect("Failed to write layout file");
         
         // Attempt to start another task
         let result = processor.decode_symbols(
             symbols_dir.to_str().unwrap(),
             output_path.to_str().unwrap(),
-            &encoder_params_array
+            layout_path.to_str().unwrap()
         );
         
         // This should fail with ConcurrencyLimitReached
@@ -1941,14 +2125,23 @@ mod tests {
         // Create symbol files
         create_symbol_files(&symbols_dir, &packets).expect("Failed to create symbol files");
         
+        // Create layout file
+        let layout_path = symbols_dir.join(LAYOUT_FILENAME);
+        let layout = RaptorQLayout {
+            encoder_parameters: encoder_params.to_vec(),
+            chunks: None,
+            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+        };
+        
+        let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
+        fs::write(&layout_path, layout_json).expect("Failed to write layout file");
+        
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let mut encoder_params_array = [0; 12];
-        encoder_params_array.copy_from_slice(&encoder_params);
         
         let result = processor.decode_symbols(
             symbols_dir.to_str().unwrap(),
             output_path.to_str().unwrap(),
-            &encoder_params_array
+            layout_path.to_str().unwrap()
         );
         
         assert!(result.is_ok());
@@ -2166,7 +2359,9 @@ mod tests {
             let chunk_data = generate_test_data(1000 + chunk_idx * 100); // Different sizes
             expected_data.extend_from_slice(&chunk_data);
         }
-        
+
+        let mut chunk_layouts_map: HashMap<i32, ChunkLayout> = HashMap::new();
+
         // Create the chunks in mixed order
         for &i in &chunk_order {
             let chunk_dir = symbols_dir.join(format!("chunk_{}", i));
@@ -2188,16 +2383,50 @@ mod tests {
             
             // Create symbol files for this chunk
             create_symbol_files(&chunk_dir, &packets).expect("Failed to create symbol files");
+
+            let mut offset = 0;
+            if i == 1 {
+                offset = 1000;
+            } else if i == 2 {
+                offset = 2100;
+            }
+            
+            let chunk_layout = ChunkLayout {
+                chunk_id: format!("chunk_{}", i),
+                original_offset: offset,
+                size: (1000 + i * 100) as u64,
+                symbols: (0..packets.len()).map(|j| format!("symbol_{}.bin", j)).collect(),
+            };
+
+            chunk_layouts_map.insert(i as i32, chunk_layout);
         }
         
-        let processor = RaptorQProcessor::new(ProcessorConfig::default());
         let mut encoder_params_array = [0; 12];
         encoder_params_array.copy_from_slice(&encoder_params);
+        
+        // Create layout file
+        let mut chunk_layouts = Vec::with_capacity(3);
+        for &i in &[0, 1, 2] {  // In correct order for the layout
+            chunk_layouts.push(chunk_layouts_map[&i].clone());
+        }
+
+        let layout = RaptorQLayout {
+            encoder_parameters: encoder_params.to_vec(),
+            chunks: Some(chunk_layouts),
+            symbols: None,
+        };
+        
+        // Save layout file
+        let layout_path = symbols_dir.join(LAYOUT_FILENAME);
+        let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
+        fs::write(&layout_path, layout_json).expect("Failed to write layout file");
+        
+        let processor = RaptorQProcessor::new(ProcessorConfig::default());
         
         let result = processor.decode_symbols(
             symbols_dir.to_str().unwrap(),
             output_path.to_str().unwrap(),
-            &encoder_params_array
+            layout_path.to_str().unwrap()
         );
         
         assert!(result.is_ok());

@@ -9,7 +9,7 @@ use rand::rngs::StdRng;
 use rq_library::processor::{RaptorQProcessor, ProcessorConfig, ProcessResult};
 use sha3::{Digest, Sha3_256};
 use std::collections::HashSet;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use tempfile::{tempdir, TempDir};
@@ -34,7 +34,8 @@ fn generate_random_file(path: &Path, size_bytes: usize) -> std::io::Result<()> {
         remaining -= write_size;
     }
     
-    file.flush()?
+    let _ = file.flush();
+    Ok(())
 }
 
 /// Calculate SHA3-256 hash of a file to verify integrity
@@ -55,6 +56,7 @@ fn calculate_file_hash(path: &Path) -> std::io::Result<Vec<u8>> {
 }
 
 /// Simple helper to convert a byte slice to a hex string
+#[allow(dead_code)]
 fn to_hex_string(bytes: &[u8]) -> String {
     bytes.iter()
         .map(|b| format!("{:02x}", b))
@@ -166,31 +168,30 @@ impl TestContext {
             for chunk in chunks {
                 let chunk_dir = self.symbols_dir.join(&chunk.chunk_id);
                 let entries = fs::read_dir(&chunk_dir)?;
-                
-                let mut files: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
+                // Collect file entries and their paths
+                let files: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
                 let source_symbols = (chunk.symbols_count - result.repair_symbols) as usize;
                 
-                // Keep all source symbols (essential) and a random subset of repair symbols
-                let mut to_keep = files[..source_symbols].to_vec();
+                // Keep paths instead of DirEntry objects
+                let mut to_keep_paths = Vec::new();
                 
-                // Randomly select some repair symbols
-                let repair_subset: Vec<_> = files[source_symbols..]
-                    .iter()
-                    .filter(|_| rng.gen_bool(percentage))
-                    .cloned()
-                    .collect();
+                // Always keep source symbols
+                for i in 0..std::cmp::min(source_symbols, files.len()) {
+                    to_keep_paths.push(files[i].path());
+                }
                 
-                to_keep.extend(repair_subset);
-                
-                // Create a set of filenames to keep
-                let keep_set: HashSet<_> = to_keep
-                    .iter()
-                    .map(|entry| entry.file_name())
-                    .collect();
+                // Add random repair symbols
+                for i in source_symbols..files.len() {
+                    if rng.gen_bool(percentage) {
+                        to_keep_paths.push(files[i].path());
+                    }
+                }
+                // Create a set of paths to keep (using HashSet for O(1) lookups)
+                let keep_paths: HashSet<_> = to_keep_paths.into_iter().collect();
                 
                 // Delete files not in the keep set
                 for entry in &files {
-                    if !keep_set.contains(&entry.file_name()) {
+                    if !keep_paths.contains(&entry.path()) {
                         fs::remove_file(entry.path())?;
                     }
                 }
@@ -198,31 +199,28 @@ impl TestContext {
         } else {
             // For non-chunked encoding
             let entries = fs::read_dir(&self.symbols_dir)?;
-            let mut files: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
+            let files: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
             
             let source_symbols = result.source_symbols as usize;
             
-            // Keep all source symbols (essential) and a random subset of repair symbols
-            let mut to_keep = files[..source_symbols].to_vec();
+            // Create a set of paths to keep
+            let mut keep_paths = HashSet::new();
             
-            // Randomly select some repair symbols
-            let repair_subset: Vec<_> = files[source_symbols..]
-                .iter()
-                .filter(|_| rng.gen_bool(percentage))
-                .cloned()
-                .collect();
+            // Always keep source symbols
+            for i in 0..std::cmp::min(source_symbols, files.len()) {
+                keep_paths.insert(files[i].path());
+            }
             
-            to_keep.extend(repair_subset);
-            
-            // Create a set of filenames to keep
-            let keep_set: HashSet<_> = to_keep
-                .iter()
-                .map(|entry| entry.file_name())
-                .collect();
+            // Add random repair symbols
+            for i in source_symbols..files.len() {
+                if rng.gen_bool(percentage) {
+                    keep_paths.insert(files[i].path());
+                }
+            }
             
             // Delete files not in the keep set
             for entry in &files {
-                if !keep_set.contains(&entry.file_name()) {
+                if !keep_paths.contains(&entry.path()) {
                     fs::remove_file(entry.path())?;
                 }
             }
@@ -242,21 +240,20 @@ fn test_encode_decode(
     let ctx = TestContext::new(file_size_bytes)?;
     
     // Encode the file
-    let result = processor.encode_file_streamed(
+    let _ = processor.encode_file_streamed(
         &ctx.input_path(),
         &ctx.symbols_path(),
         chunk_size
     ).expect("Failed to encode file");
     
-    // Convert encoder parameters to fixed-size array
-    let mut encoder_params = [0u8; 12];
-    encoder_params.copy_from_slice(&result.encoder_parameters);
+    // Use the layout file that was generated during encoding
+    let layout_path = Path::new(&ctx.symbols_path()).join("_raptorq_layout.json");
     
-    // Decode the symbols
+    // Decode the symbols using the layout file
     processor.decode_symbols(
         &ctx.symbols_path(),
         &ctx.output_path(),
-        &encoder_params
+        &layout_path.to_string_lossy()
     ).expect("Failed to decode symbols");
     
     // Verify the decoded file matches the original
@@ -353,15 +350,14 @@ fn test_sys_decode_minimum_symbols() {
     // Delete all repair symbols, keeping only source symbols
     ctx.delete_repair_symbols(&result).expect("Failed to delete repair symbols");
     
-    // Convert encoder parameters to fixed-size array
-    let mut encoder_params = [0u8; 12];
-    encoder_params.copy_from_slice(&result.encoder_parameters);
+    // Use the layout file that was generated during encoding
+    let layout_path = Path::new(&ctx.symbols_path()).join("_raptorq_layout.json");
     
     // Decode with only source symbols
     processor.decode_symbols(
         &ctx.symbols_path(),
         &ctx.output_path(),
-        &encoder_params
+        &layout_path.to_string_lossy()
     ).expect("Failed to decode with only source symbols");
     
     // Verify the decoded file matches the original
@@ -379,7 +375,7 @@ fn test_sys_decode_redundant_symbols() {
     let ctx = TestContext::new(file_size).expect("Failed to create test context");
     
     // Encode the file
-    let result = processor.encode_file_streamed(
+    let _ = processor.encode_file_streamed(
         &ctx.input_path(),
         &ctx.symbols_path(),
         0
@@ -387,15 +383,14 @@ fn test_sys_decode_redundant_symbols() {
     
     // Keep all symbols (we're testing with redundancy)
     
-    // Convert encoder parameters to fixed-size array
-    let mut encoder_params = [0u8; 12];
-    encoder_params.copy_from_slice(&result.encoder_parameters);
+    // Use the layout file that was generated during encoding
+    let layout_path = Path::new(&ctx.symbols_path()).join("_raptorq_layout.json");
     
     // Decode with all symbols
     processor.decode_symbols(
         &ctx.symbols_path(),
         &ctx.output_path(),
-        &encoder_params
+        &layout_path.to_string_lossy()
     ).expect("Failed to decode with all symbols");
     
     // Verify the decoded file matches the original
@@ -423,15 +418,14 @@ fn test_sys_decode_random_subset() {
     // but always keep all source symbols
     ctx.keep_random_subset_of_symbols(&result, 0.5).expect("Failed to select random subset");
     
-    // Convert encoder parameters to fixed-size array
-    let mut encoder_params = [0u8; 12];
-    encoder_params.copy_from_slice(&result.encoder_parameters);
+    // Use the layout file that was generated during encoding
+    let layout_path = Path::new(&ctx.symbols_path()).join("_raptorq_layout.json");
     
     // Decode with random subset of symbols
     processor.decode_symbols(
         &ctx.symbols_path(),
         &ctx.output_path(),
-        &encoder_params
+        &layout_path.to_string_lossy()
     ).expect("Failed to decode with random subset of symbols");
     
     // Verify the decoded file matches the original
@@ -478,13 +472,13 @@ fn test_sys_error_handling_decode() {
     // Non-existent symbols directory
     let non_existent_dir = ctx.temp_dir.path().join("non_existent_symbols");
     
-    // Arbitrary encoder parameters
-    let encoder_params = [0u8; 12];
+    // Non-existent layout file
+    let non_existent_layout = ctx.temp_dir.path().join("non_existent_layout.json");
     
     let result = processor.decode_symbols(
         &non_existent_dir.to_string_lossy(),
         &ctx.output_path(),
-        &encoder_params
+        &non_existent_layout.to_string_lossy()
     );
     
     // Verify error is reported correctly
