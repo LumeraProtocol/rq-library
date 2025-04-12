@@ -86,10 +86,9 @@ sequenceDiagram
                     Note over RaptorQ: API returns full decoded chunk in memory
                     Processor->>Processor: chunk_data_vec.extend_from_slice(&result)
                     Note over Processor: Memory Usage ≈ decoded chunk size
-                    break
                 end
             end
-            Processor-->>-Processor:
+            Note over Processor: Chunk decoding completed
             Processor->>FS: output_file.write_all(&chunk_data_vec)
         end
     else Single Directory
@@ -105,10 +104,10 @@ sequenceDiagram
                 Note over RaptorQ: API returns full decoded block in memory
                 Processor->>FS: output_writer.write_all(&result)
                 Note over Processor: Writes decoded block directly (more efficient than chunked path)
-                break
             end
         end
-        Processor-->>-Processor:
+        Note over Processor: Single file decoding completed
     end
     Processor-->>-FFI: Ok
     FFI-->>-C_Client: Result Code
+```

@@ -22,7 +22,6 @@ fn main() {
 
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=src/processor.rs");
-    println!("cargo:rerun-if-changed=src/utils.rs");
 }
 
 fn target_dir() -> PathBuf {

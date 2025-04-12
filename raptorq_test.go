@@ -1,0 +1,974 @@
+package raptorq
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"fmt"
+	"io"
+	"math/rand"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// TestContext manages test artifacts and directories
+type TestContext struct {
+	TempDir    string
+	InputFile  string
+	SymbolsDir string
+	OutputFile string
+}
+
+// NewTestContext creates a new test context with generated input file of specified size
+func NewTestContext(t *testing.T, fileSizeBytes int) *TestContext {
+	// Create temporary directory
+	tempDir, err := os.MkdirTemp("", "raptorq-test-")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %v", err)
+	}
+
+	// Setup paths
+	inputFile := filepath.Join(tempDir, "input.bin")
+	symbolsDir := filepath.Join(tempDir, "symbols")
+	outputFile := filepath.Join(tempDir, "output.bin")
+
+	// Create symbols directory
+	if err := os.MkdirAll(symbolsDir, 0755); err != nil {
+		t.Fatalf("Failed to create symbols directory: %v", err)
+	}
+
+	// Generate random input file
+	if err := generateRandomFile(inputFile, fileSizeBytes); err != nil {
+		t.Fatalf("Failed to generate random file: %v", err)
+	}
+
+	return &TestContext{
+		TempDir:    tempDir,
+		InputFile:  inputFile,
+		SymbolsDir: symbolsDir,
+		OutputFile: outputFile,
+	}
+}
+
+// Cleanup removes all temporary files and directories
+func (ctx *TestContext) Cleanup() {
+	os.RemoveAll(ctx.TempDir)
+}
+
+// VerifyFilesMatch checks if output file matches input file using SHA256 hashing
+func (ctx *TestContext) VerifyFilesMatch(t *testing.T) bool {
+	inputHash, err := calculateFileHash(ctx.InputFile)
+	if err != nil {
+		t.Fatalf("Failed to hash input file: %v", err)
+	}
+
+	outputHash, err := calculateFileHash(ctx.OutputFile)
+	if err != nil {
+		t.Fatalf("Failed to hash output file: %v", err)
+	}
+
+	return bytes.Equal(inputHash, outputHash)
+}
+
+// DeleteRepairSymbols removes repair symbols, keeping only source symbols
+func (ctx *TestContext) DeleteRepairSymbols(t *testing.T, result *ProcessResult) {
+	if len(result.Chunks) > 0 {
+		// For chunked encoding
+		for _, chunk := range result.Chunks {
+			chunkDir := filepath.Join(ctx.SymbolsDir, chunk.ChunkID)
+			entries, err := os.ReadDir(chunkDir)
+			if err != nil {
+				t.Fatalf("Failed to read chunk directory: %v", err)
+			}
+
+			// Sort and keep only source symbols
+			fileNames := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				fileNames = append(fileNames, entry.Name())
+			}
+			// Sort filenames for deterministic behavior
+			fileNames = sortStrings(fileNames)
+
+			// Delete repair symbols (keep only source symbols count)
+			sourceSymbols := int(chunk.SymbolsCount - result.RepairSymbols)
+			for i := sourceSymbols; i < len(fileNames); i++ {
+				err := os.Remove(filepath.Join(chunkDir, fileNames[i]))
+				if err != nil {
+					t.Fatalf("Failed to delete repair symbol: %v", err)
+				}
+			}
+		}
+	} else {
+		// For non-chunked encoding
+		entries, err := os.ReadDir(ctx.SymbolsDir)
+		if err != nil {
+			t.Fatalf("Failed to read symbols directory: %v", err)
+		}
+
+		// Sort and keep only source symbols
+		fileNames := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			fileNames = append(fileNames, entry.Name())
+		}
+		// Sort filenames for deterministic behavior
+		fileNames = sortStrings(fileNames)
+
+		// Delete repair symbols (keep only source symbols count)
+		for i := int(result.SourceSymbols); i < len(fileNames); i++ {
+			err := os.Remove(filepath.Join(ctx.SymbolsDir, fileNames[i]))
+			if err != nil {
+				t.Fatalf("Failed to delete repair symbol: %v", err)
+			}
+		}
+	}
+}
+
+// KeepRandomSubsetOfSymbols keeps a random subset of symbols
+// It keeps all source symbols and a percentage of repair symbols
+func (ctx *TestContext) KeepRandomSubsetOfSymbols(t *testing.T, result *ProcessResult, percentage float64) {
+	r := rand.New(rand.NewSource(42)) // Use fixed seed for reproducibility
+
+	if len(result.Chunks) > 0 {
+		// For chunked encoding
+		for _, chunk := range result.Chunks {
+			chunkDir := filepath.Join(ctx.SymbolsDir, chunk.ChunkID)
+			entries, err := os.ReadDir(chunkDir)
+			if err != nil {
+				t.Fatalf("Failed to read chunk directory: %v", err)
+			}
+
+			// Sort and process symbols
+			fileNames := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				fileNames = append(fileNames, entry.Name())
+			}
+			// Sort filenames for deterministic behavior
+			fileNames = sortStrings(fileNames)
+
+			// Always keep source symbols, randomly keep repair symbols
+			sourceSymbols := int(chunk.SymbolsCount - result.RepairSymbols)
+			toKeep := make(map[string]bool)
+
+			// Keep all source symbols
+			for i := 0; i < sourceSymbols; i++ {
+				toKeep[fileNames[i]] = true
+			}
+
+			// Randomly keep repair symbols
+			for i := sourceSymbols; i < len(fileNames); i++ {
+				if r.Float64() < percentage {
+					toKeep[fileNames[i]] = true
+				}
+			}
+
+			// Delete files not in the keep set
+			for _, name := range fileNames {
+				if !toKeep[name] {
+					err := os.Remove(filepath.Join(chunkDir, name))
+					if err != nil {
+						t.Fatalf("Failed to delete symbol: %v", err)
+					}
+				}
+			}
+		}
+	} else {
+		// For non-chunked encoding
+		entries, err := os.ReadDir(ctx.SymbolsDir)
+		if err != nil {
+			t.Fatalf("Failed to read symbols directory: %v", err)
+		}
+
+		// Sort and process symbols
+		fileNames := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			fileNames = append(fileNames, entry.Name())
+		}
+		// Sort filenames for deterministic behavior
+		fileNames = sortStrings(fileNames)
+
+		// Always keep source symbols, randomly keep repair symbols
+		sourceSymbols := int(result.SourceSymbols)
+		toKeep := make(map[string]bool)
+
+		// Keep all source symbols
+		for i := 0; i < sourceSymbols; i++ {
+			toKeep[fileNames[i]] = true
+		}
+
+		// Randomly keep repair symbols
+		for i := sourceSymbols; i < len(fileNames); i++ {
+			if r.Float64() < percentage {
+				toKeep[fileNames[i]] = true
+			}
+		}
+
+		// Delete files not in the keep set
+		for _, name := range fileNames {
+			if !toKeep[name] {
+				err := os.Remove(filepath.Join(ctx.SymbolsDir, name))
+				if err != nil {
+					t.Fatalf("Failed to delete symbol: %v", err)
+				}
+			}
+		}
+	}
+}
+
+// Helper function to generate a random binary file of specified size
+func generateRandomFile(path string, sizeBytes int) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer file.Close()
+
+	// Use a seeded RNG for reproducibility
+	r := rand.New(rand.NewSource(42))
+
+	// Generate and write data in chunks to avoid excessive memory usage
+	const chunkSize = 1024 * 1024 // 1 MB chunks
+	buffer := make([]byte, min(chunkSize, sizeBytes))
+
+	remaining := sizeBytes
+	for remaining > 0 {
+		writeSize := min(len(buffer), remaining)
+		_, err := r.Read(buffer[:writeSize])
+		if err != nil {
+			return fmt.Errorf("failed to generate random data: %w", err)
+		}
+
+		_, err = file.Write(buffer[:writeSize])
+		if err != nil {
+			return fmt.Errorf("failed to write data: %w", err)
+		}
+
+		remaining -= writeSize
+	}
+
+	return file.Sync()
+}
+
+// Helper to calculate SHA256 hash of a file
+func calculateFileHash(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	hasher := sha256.New()
+	buffer := make([]byte, 1024*1024) // 1 MB buffer
+
+	for {
+		bytesRead, err := file.Read(buffer)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read file: %w", err)
+		}
+
+		hasher.Write(buffer[:bytesRead])
+	}
+
+	return hasher.Sum(nil), nil
+}
+
+// Helper for sorting strings
+func sortStrings(strs []string) []string {
+	// Simple bubble sort for now
+	for i := 0; i < len(strs); i++ {
+		for j := i + 1; j < len(strs); j++ {
+			if strs[i] > strs[j] {
+				strs[i], strs[j] = strs[j], strs[i]
+			}
+		}
+	}
+	return strs
+}
+
+// Helper to convert a byte slice to a hex string
+func toHexString(bytes []byte) string {
+	var builder strings.Builder
+	for _, b := range bytes {
+		fmt.Fprintf(&builder, "%02x", b)
+	}
+	return builder.String()
+}
+
+// Helper function to encode and decode a file with specified size
+func testEncodeDecodeFile(t *testing.T, processor *RaptorQProcessor, fileSizeBytes, chunkSize int) bool {
+	// Create test context with input file
+	ctx := NewTestContext(t, fileSizeBytes)
+	defer ctx.Cleanup()
+
+	// Encode the file
+	result, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, chunkSize)
+	if err != nil {
+		t.Fatalf("Failed to encode file: %v", err)
+	}
+
+	// Decode the symbols
+	err = processor.DecodeSymbols(ctx.SymbolsDir, ctx.OutputFile, result.EncoderParameters)
+	if err != nil {
+		t.Fatalf("Failed to decode symbols: %v", err)
+	}
+
+	// Verify the decoded file matches the original
+	return ctx.VerifyFilesMatch(t)
+}
+
+// System test for encoding/decoding a small file (1KB)
+func TestSysEncodeDecodeSmallFile(t *testing.T) {
+	// Create RaptorQ processor with default settings
+	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	fileSize := 1 * 1024 // 1KB
+	result := testEncodeDecodeFile(t, processor, fileSize, 0)
+	if !result {
+		t.Fatal("Decoded file does not match original")
+	}
+}
+
+// System test for encoding/decoding a medium file (10MB)
+func TestSysEncodeMediumFile(t *testing.T) {
+	// Create RaptorQ processor with default settings
+	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	fileSize := 10 * 1024 * 1024 // 10MB
+	result := testEncodeDecodeFile(t, processor, fileSize, 0)
+	if !result {
+		t.Fatal("Decoded file does not match original")
+	}
+}
+
+// System test for encoding/decoding a large file with auto-chunking (100MB)
+func TestSysEncodeLargeFileAutoChunk(t *testing.T) {
+	// Create RaptorQ processor with small memory limit to force auto-chunking
+	processor, err := NewRaptorQProcessor(50000, 10, 10, 4)
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	fileSize := 100 * 1024 * 1024 // 100MB
+	result := testEncodeDecodeFile(t, processor, fileSize, 0)
+	if !result {
+		t.Fatal("Decoded file does not match original")
+	}
+}
+
+// System test for encoding/decoding a large file with manual chunking (100MB)
+func TestSysEncodeLargeFileManualChunk(t *testing.T) {
+	// Create RaptorQ processor with default settings
+	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	fileSize := 100 * 1024 * 1024 // 100MB
+	chunkSize := 10 * 1024 * 1024 // 10MB chunks
+	result := testEncodeDecodeFile(t, processor, fileSize, chunkSize)
+	if !result {
+		t.Fatal("Decoded file does not match original")
+	}
+}
+
+// System test for encoding/decoding a very large file (1GB)
+// This test is skipped by default due to resource requirements
+func TestSysEncodeVeryLargeFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping very large file test in short mode")
+	}
+
+	// Create RaptorQ processor with default settings
+	processor, err := NewRaptorQProcessor(1000, 10, 500, 4)
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	fileSize := 1024 * 1024 * 1024 // 1GB
+	chunkSize := 50 * 1024 * 1024  // 50MB chunks
+	result := testEncodeDecodeFile(t, processor, fileSize, chunkSize)
+	if !result {
+		t.Fatal("Decoded file does not match original")
+	}
+}
+
+// System test for decoding with only source symbols (minimum necessary)
+func TestSysDecodeMinimumSymbols(t *testing.T) {
+	// Create RaptorQ processor with default settings
+	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	// Create test context
+	fileSize := 5 * 1024 * 1024 // 5MB
+	ctx := NewTestContext(t, fileSize)
+	defer ctx.Cleanup()
+
+	// Encode the file
+	result, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, 0)
+	if err != nil {
+		t.Fatalf("Failed to encode file: %v", err)
+	}
+
+	// Delete all repair symbols, keeping only source symbols
+	ctx.DeleteRepairSymbols(t, result)
+
+	// Decode with only source symbols
+	err = processor.DecodeSymbols(ctx.SymbolsDir, ctx.OutputFile, result.EncoderParameters)
+	if err != nil {
+		t.Fatalf("Failed to decode with only source symbols: %v", err)
+	}
+
+	// Verify the decoded file matches the original
+	if !ctx.VerifyFilesMatch(t) {
+		t.Fatal("Decoded file does not match original")
+	}
+}
+
+// System test for decoding with all symbols (source + repair)
+func TestSysDecodeRedundantSymbols(t *testing.T) {
+	// Create RaptorQ processor with default settings
+	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	// Create test context
+	fileSize := 5 * 1024 * 1024 // 5MB
+	ctx := NewTestContext(t, fileSize)
+	defer ctx.Cleanup()
+
+	// Encode the file
+	result, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, 0)
+	if err != nil {
+		t.Fatalf("Failed to encode file: %v", err)
+	}
+
+	// Keep all symbols (we're testing with redundancy)
+
+	// Decode with all symbols
+	err = processor.DecodeSymbols(ctx.SymbolsDir, ctx.OutputFile, result.EncoderParameters)
+	if err != nil {
+		t.Fatalf("Failed to decode with all symbols: %v", err)
+	}
+
+	// Verify the decoded file matches the original
+	if !ctx.VerifyFilesMatch(t) {
+		t.Fatal("Decoded file does not match original")
+	}
+}
+
+// System test for decoding with a random subset of symbols
+func TestSysDecodeRandomSubset(t *testing.T) {
+	// Create RaptorQ processor with default settings
+	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	// Create test context
+	fileSize := 5 * 1024 * 1024 // 5MB
+	ctx := NewTestContext(t, fileSize)
+	defer ctx.Cleanup()
+
+	// Encode the file
+	result, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, 0)
+	if err != nil {
+		t.Fatalf("Failed to encode file: %v", err)
+	}
+
+	// Keep a random subset of repair symbols (50% of them)
+	// but always keep all source symbols
+	ctx.KeepRandomSubsetOfSymbols(t, result, 0.5)
+
+	// Decode with random subset of symbols
+	err = processor.DecodeSymbols(ctx.SymbolsDir, ctx.OutputFile, result.EncoderParameters)
+	if err != nil {
+		t.Fatalf("Failed to decode with random subset: %v", err)
+	}
+
+	// Verify the decoded file matches the original
+	if !ctx.VerifyFilesMatch(t) {
+		t.Fatal("Decoded file does not match original")
+	}
+}
+
+// System test for error handling during encoding (non-existent input)
+func TestSysErrorHandlingEncode(t *testing.T) {
+	// Create RaptorQ processor with default settings
+	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	// Create test context (only used for temp directory and symbols dir)
+	ctx := NewTestContext(t, 1024)
+	defer ctx.Cleanup()
+
+	// Try to encode a non-existent file
+	nonExistentFile := filepath.Join(ctx.TempDir, "does_not_exist.bin")
+
+	_, err = processor.EncodeFile(nonExistentFile, ctx.SymbolsDir, 0)
+
+	// Verify error is reported correctly
+	if err == nil {
+		t.Fatal("Expected encoding to fail with non-existent file")
+	}
+
+	if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
+		t.Fatalf("Error message should indicate file not found, got: %v", err)
+	}
+}
+
+// System test for error handling during decoding (non-existent symbols dir)
+func TestSysErrorHandlingDecode(t *testing.T) {
+	// Create RaptorQ processor with default settings
+	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	// Create test context (only used for temp directory and output file)
+	ctx := NewTestContext(t, 1024)
+	defer ctx.Cleanup()
+
+	// Non-existent symbols directory
+	nonExistentDir := filepath.Join(ctx.TempDir, "non_existent_symbols")
+
+	// Arbitrary encoder parameters
+	encoderParams := make([]byte, 12)
+
+	err = processor.DecodeSymbols(nonExistentDir, ctx.OutputFile, encoderParams)
+
+	// Verify error is reported correctly
+	if err == nil {
+		t.Fatal("Expected decoding to fail with non-existent symbols dir")
+	}
+
+	if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
+		t.Fatalf("Error message should indicate directory not found, got: %v", err)
+	}
+}
+
+// Go-specific test for FFI interactions
+func TestGoSpecificFFIInteractions(t *testing.T) {
+	// This test verifies Go string/slice handling with C functions
+
+	// Test creating and freeing a session
+	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+
+	// Test session ID is non-zero
+	if processor.SessionID == 0 {
+		t.Fatal("Expected non-zero session ID")
+	}
+
+	// Test getting library version (C string -> Go string)
+	version := GetVersion()
+	if version == "Unknown version" || version == "" {
+		t.Fatalf("Failed to get library version or got unexpected value: %s", version)
+	}
+
+	// Test getting error message when none exists
+	if processor.getLastError() != "" {
+		t.Fatalf("Expected empty error message, got: %s", processor.getLastError())
+	}
+
+	// Force an error to test error message conversion
+	ctx := NewTestContext(t, 1024)
+	defer ctx.Cleanup()
+	nonExistentFile := filepath.Join(ctx.TempDir, "does_not_exist.bin")
+
+	_, err = processor.EncodeFile(nonExistentFile, ctx.SymbolsDir, 0)
+	if err == nil {
+		t.Fatal("Expected encoding to fail")
+	}
+
+	// Get error message and verify it's not empty
+	errorMsg := processor.getLastError()
+	if errorMsg == "" {
+		t.Fatal("Expected non-empty error message")
+	}
+
+	// Test passing Go byte slice to C
+	// Create a small file, encode it, and verify encoder parameters buffer handling
+	smallFilePath := filepath.Join(ctx.TempDir, "small_test.bin")
+	if err := generateRandomFile(smallFilePath, 1024); err != nil {
+		t.Fatalf("Failed to generate small test file: %v", err)
+	}
+
+	result, err := processor.EncodeFile(smallFilePath, ctx.SymbolsDir, 0)
+	if err != nil {
+		t.Fatalf("Failed to encode small file: %v", err)
+	}
+
+	// Verify encoder parameters slice has correct length
+	if len(result.EncoderParameters) != 12 {
+		t.Fatalf("Expected encoder parameters to be 12 bytes, got %d", len(result.EncoderParameters))
+	}
+
+	// Free the processor to test cleanup
+	processor.Free()
+
+	// Verify session is closed
+	if processor.SessionID != 0 {
+		t.Fatal("Session should be closed after Free()")
+	}
+}
+
+// Helper function for Go 1.17+ compatibility
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Constants for file sizes used in benchmarks
+const (
+	SIZE_1MB   = 1 * 1024 * 1024    // 1MB
+	SIZE_10MB  = 10 * 1024 * 1024   // 10MB
+	SIZE_100MB = 100 * 1024 * 1024  // 100MB
+	SIZE_1GB   = 1024 * 1024 * 1024 // 1GB
+)
+
+// setupBenchmarkEnv creates a test environment with a file of specified size for benchmarking
+// Returns the test context, which should be cleaned up after use
+func setupBenchmarkEnv(b *testing.B, fileSize int) *TestContext {
+	// Create temporary directory
+	tempDir, err := os.MkdirTemp("", "raptorq-bench-")
+	if err != nil {
+		b.Fatalf("Failed to create temp directory: %v", err)
+	}
+
+	// Setup paths
+	inputFile := filepath.Join(tempDir, "input.bin")
+	symbolsDir := filepath.Join(tempDir, "symbols")
+	outputFile := filepath.Join(tempDir, "output.bin")
+
+	// Create symbols directory
+	if err := os.MkdirAll(symbolsDir, 0755); err != nil {
+		b.Fatalf("Failed to create symbols directory: %v", err)
+	}
+
+	// Generate random input file
+	if err := generateRandomFile(inputFile, fileSize); err != nil {
+		b.Fatalf("Failed to generate random file: %v", err)
+	}
+
+	return &TestContext{
+		TempDir:    tempDir,
+		InputFile:  inputFile,
+		SymbolsDir: symbolsDir,
+		OutputFile: outputFile,
+	}
+}
+
+// prepareFilesForDecoding encodes a file and returns the encoder parameters
+// This is used to setup test data before running the decode benchmarks
+func prepareFilesForDecoding(b *testing.B, processor *RaptorQProcessor, ctx *TestContext) []byte {
+	result, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, 0)
+	if err != nil {
+		b.Fatalf("Failed to encode file for decode benchmark setup: %v", err)
+	}
+	return result.EncoderParameters
+}
+
+// BenchmarkEncode1MB measures encoding time for a 1MB file
+func BenchmarkEncode1MB(b *testing.B) {
+	// Create RaptorQ processor
+	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	if err != nil {
+		b.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	// Setup test environment
+	ctx := setupBenchmarkEnv(b, SIZE_1MB)
+	defer ctx.Cleanup()
+
+	// Reset timer before starting the benchmark loop
+	b.ResetTimer()
+
+	// Run the benchmark
+	for i := 0; i < b.N; i++ {
+		_, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, 0)
+		if err != nil {
+			b.Fatalf("Failed to encode file: %v", err)
+		}
+
+		// Clean symbols directory for next iteration
+		if i < b.N-1 {
+			os.RemoveAll(ctx.SymbolsDir)
+			os.MkdirAll(ctx.SymbolsDir, 0755)
+		}
+	}
+}
+
+// BenchmarkEncode10MB measures encoding time for a 10MB file
+func BenchmarkEncode10MB(b *testing.B) {
+	// Create RaptorQ processor
+	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	if err != nil {
+		b.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	// Setup test environment
+	ctx := setupBenchmarkEnv(b, SIZE_10MB)
+	defer ctx.Cleanup()
+
+	// Reset timer before starting the benchmark loop
+	b.ResetTimer()
+
+	// Run the benchmark
+	for i := 0; i < b.N; i++ {
+		_, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, 0)
+		if err != nil {
+			b.Fatalf("Failed to encode file: %v", err)
+		}
+
+		// Clean symbols directory for next iteration
+		if i < b.N-1 {
+			os.RemoveAll(ctx.SymbolsDir)
+			os.MkdirAll(ctx.SymbolsDir, 0755)
+		}
+	}
+}
+
+// BenchmarkEncode100MB measures encoding time for a 100MB file
+func BenchmarkEncode100MB(b *testing.B) {
+	// Create RaptorQ processor
+	processor, err := NewRaptorQProcessor(1000, 10, 500, 4)
+	if err != nil {
+		b.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	// Setup test environment
+	ctx := setupBenchmarkEnv(b, SIZE_100MB)
+	defer ctx.Cleanup()
+
+	// Reset timer before starting the benchmark loop
+	b.ResetTimer()
+
+	// Run the benchmark
+	for i := 0; i < b.N; i++ {
+		_, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, 0)
+		if err != nil {
+			b.Fatalf("Failed to encode file: %v", err)
+		}
+
+		// Clean symbols directory for next iteration
+		if i < b.N-1 {
+			os.RemoveAll(ctx.SymbolsDir)
+			os.MkdirAll(ctx.SymbolsDir, 0755)
+		}
+	}
+}
+
+// BenchmarkEncode1GB measures encoding time for a 1GB file
+func BenchmarkEncode1GB(b *testing.B) {
+	// Skip in short mode
+	if testing.Short() {
+		b.Skip("Skipping 1GB file benchmark in short mode")
+	}
+
+	// Create RaptorQ processor with increased memory
+	processor, err := NewRaptorQProcessor(1000, 10, 2048, 4)
+	if err != nil {
+		b.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	// Setup test environment
+	ctx := setupBenchmarkEnv(b, SIZE_1GB)
+	defer ctx.Cleanup()
+
+	// Use chunking for large file
+	chunkSize := 50 * 1024 * 1024 // 50MB chunks
+
+	// Reset timer before starting the benchmark loop
+	b.ResetTimer()
+
+	// Run the benchmark
+	for i := 0; i < b.N; i++ {
+		_, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, chunkSize)
+		if err != nil {
+			b.Fatalf("Failed to encode file: %v", err)
+		}
+
+		// Clean symbols directory for next iteration
+		if i < b.N-1 {
+			os.RemoveAll(ctx.SymbolsDir)
+			os.MkdirAll(ctx.SymbolsDir, 0755)
+		}
+	}
+}
+
+// BenchmarkDecode1MB measures decoding time for a 1MB file
+func BenchmarkDecode1MB(b *testing.B) {
+	// Create RaptorQ processor
+	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	if err != nil {
+		b.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	// Setup test environment
+	ctx := setupBenchmarkEnv(b, SIZE_1MB)
+	defer ctx.Cleanup()
+
+	// Encode file to generate symbols (outside benchmark loop)
+	encoderParams := prepareFilesForDecoding(b, processor, ctx)
+
+	// Reset timer before starting the benchmark loop
+	b.ResetTimer()
+
+	// Run the benchmark
+	for i := 0; i < b.N; i++ {
+		err := processor.DecodeSymbols(ctx.SymbolsDir, ctx.OutputFile, encoderParams)
+		if err != nil {
+			b.Fatalf("Failed to decode symbols: %v", err)
+		}
+
+		// Remove output file for next iteration
+		if i < b.N-1 {
+			os.Remove(ctx.OutputFile)
+		}
+	}
+}
+
+// BenchmarkDecode10MB measures decoding time for a 10MB file
+func BenchmarkDecode10MB(b *testing.B) {
+	// Create RaptorQ processor
+	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	if err != nil {
+		b.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	// Setup test environment
+	ctx := setupBenchmarkEnv(b, SIZE_10MB)
+	defer ctx.Cleanup()
+
+	// Encode file to generate symbols (outside benchmark loop)
+	encoderParams := prepareFilesForDecoding(b, processor, ctx)
+
+	// Reset timer before starting the benchmark loop
+	b.ResetTimer()
+
+	// Run the benchmark
+	for i := 0; i < b.N; i++ {
+		err := processor.DecodeSymbols(ctx.SymbolsDir, ctx.OutputFile, encoderParams)
+		if err != nil {
+			b.Fatalf("Failed to decode symbols: %v", err)
+		}
+
+		// Remove output file for next iteration
+		if i < b.N-1 {
+			os.Remove(ctx.OutputFile)
+		}
+	}
+}
+
+// BenchmarkDecode100MB measures decoding time for a 100MB file
+func BenchmarkDecode100MB(b *testing.B) {
+	// Create RaptorQ processor
+	processor, err := NewRaptorQProcessor(1000, 10, 500, 4)
+	if err != nil {
+		b.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	// Setup test environment
+	ctx := setupBenchmarkEnv(b, SIZE_100MB)
+	defer ctx.Cleanup()
+
+	// Encode file to generate symbols (outside benchmark loop)
+	encoderParams := prepareFilesForDecoding(b, processor, ctx)
+
+	// Reset timer before starting the benchmark loop
+	b.ResetTimer()
+
+	// Run the benchmark
+	for i := 0; i < b.N; i++ {
+		err := processor.DecodeSymbols(ctx.SymbolsDir, ctx.OutputFile, encoderParams)
+		if err != nil {
+			b.Fatalf("Failed to decode symbols: %v", err)
+		}
+
+		// Remove output file for next iteration
+		if i < b.N-1 {
+			os.Remove(ctx.OutputFile)
+		}
+	}
+}
+
+// BenchmarkDecode1GB measures decoding time for a 1GB file
+func BenchmarkDecode1GB(b *testing.B) {
+	// Skip in short mode
+	if testing.Short() {
+		b.Skip("Skipping 1GB file benchmark in short mode")
+	}
+
+	// Create RaptorQ processor with increased memory
+	processor, err := NewRaptorQProcessor(1000, 10, 2048, 4)
+	if err != nil {
+		b.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Free()
+
+	// Setup test environment
+	ctx := setupBenchmarkEnv(b, SIZE_1GB)
+	defer ctx.Cleanup()
+
+	// Use chunking for large file
+	chunkSize := 50 * 1024 * 1024 // 50MB chunks
+
+	// Encode file to generate symbols (outside benchmark loop)
+	// For 1GB we need to specify chunk size
+	result, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, chunkSize)
+	if err != nil {
+		b.Fatalf("Failed to encode file for decode benchmark setup: %v", err)
+	}
+	encoderParams := result.EncoderParameters
+
+	// Reset timer before starting the benchmark loop
+	b.ResetTimer()
+
+	// Run the benchmark
+	for i := 0; i < b.N; i++ {
+		err := processor.DecodeSymbols(ctx.SymbolsDir, ctx.OutputFile, encoderParams)
+		if err != nil {
+			b.Fatalf("Failed to decode symbols: %v", err)
+		}
+
+		// Remove output file for next iteration
+		if i < b.N-1 {
+			os.Remove(ctx.OutputFile)
+		}
+	}
+}

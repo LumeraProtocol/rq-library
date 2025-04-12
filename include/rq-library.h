@@ -1,10 +1,10 @@
-/* RaptorQ Library - C API
+/* RQ Library - C API
  * Generated with cbindgen
  */
 
 
-#ifndef RAPTORQ_LIB_H
-#define RAPTORQ_LIB_H
+#ifndef RQ_LIB_H
+#define RQ_LIB_H
 
 /* Generated with cbindgen:0.28.0 */
 
@@ -12,7 +12,7 @@
 #include <stdbool.h>
 
 #ifdef __cplusplus
-namespace RaptorQ {
+namespace RQLibrary {
 #endif  // __cplusplus
 
 #ifdef __cplusplus
@@ -25,8 +25,8 @@ extern "C" {
  */
 uintptr_t raptorq_init_session(uint16_t symbol_size,
                                uint8_t redundancy_factor,
-                               uint32_t max_memory_mb,
-                               uint32_t concurrency_limit);
+                               uint64_t max_memory_mb,
+                               uint64_t concurrency_limit);
 
 /**
  * Frees a RaptorQ session
@@ -116,24 +116,22 @@ uintptr_t raptorq_get_recommended_chunk_size(uintptr_t session_id, uint64_t file
  */
 int32_t raptorq_version(char *version_buffer, uintptr_t version_buffer_len);
 
-extern void log(const raptorqstr *s);
+extern void log(const rqstr *s);
 
-extern raptorqPromise read_file(const raptorqFileSystem *this_, const raptorqstr *path);
+extern rqPromise read_file(const rqFileSystem *this_, const rqstr *path);
 
-extern raptorqPromise write_file(const raptorqFileSystem *this_,
-                                 const raptorqstr *path,
-                                 const raptorqUint8Array *data);
+extern rqPromise write_file(const rqFileSystem *this_, const rqstr *path, const rqUint8Array *data);
 
-extern raptorqPromise mkdir(const raptorqFileSystem *this_, const raptorqstr *path);
+extern rqPromise mkdir(const rqFileSystem *this_, const rqstr *path);
 
-extern raptorqPromise stat(const raptorqFileSystem *this_, const raptorqstr *path);
+extern rqPromise stat(const rqFileSystem *this_, const rqstr *path);
 
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus
 
 #ifdef __cplusplus
-}  // namespace RaptorQ
+}  // namespace RQLibrary
 #endif  // __cplusplus
 
-#endif  /* RAPTORQ_LIB_H */
+#endif  /* RQ_LIB_H */

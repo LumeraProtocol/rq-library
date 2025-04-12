@@ -1,9 +1,11 @@
 package raptorq
 
-// #cgo LDFLAGS: -L${SRCDIR}/lib -lraptorq_lib -lm
-// #include <stdlib.h>
-// #include <stdint.h>
-// #include "include/raptorq.h"
+/*
+#cgo LDFLAGS: -L${SRCDIR}/target/release -lrq_library -lm
+#include <stdlib.h>
+#include <stdint.h>
+#include "include/rq-library.h"
+*/
 import "C"
 import (
 	"encoding/json"
@@ -24,12 +26,12 @@ type RaptorQProcessor struct {
 
 // ProcessResult holds information about the processing results
 type ProcessResult struct {
-	EncoderParameters []byte   `json:"encoder_parameters"`
-	SourceSymbols     uint32   `json:"source_symbols"`
-	RepairSymbols     uint32   `json:"repair_symbols"`
-	SymbolsDirectory  string   `json:"symbols_directory"`
-	SymbolsCount      uint32   `json:"symbols_count"`
-	Chunks            []Chunk  `json:"chunks,omitempty"`
+	EncoderParameters []byte  `json:"encoder_parameters"`
+	SourceSymbols     uint32  `json:"source_symbols"`
+	RepairSymbols     uint32  `json:"repair_symbols"`
+	SymbolsDirectory  string  `json:"symbols_directory"`
+	SymbolsCount      uint32  `json:"symbols_count"`
+	Chunks            []Chunk `json:"chunks,omitempty"`
 }
 
 // Chunk represents information about a processed chunk
@@ -111,9 +113,9 @@ func (p *RaptorQProcessor) EncodeFile(inputPath, outputDir string, chunkSize int
 		C.uintptr_t(p.SessionID),
 		cInputPath,
 		cOutputDir,
-		C.size_t(chunkSize),
+		C.uintptr_t(chunkSize),
 		resultBuf,
-		C.size_t(resultBufSize),
+		C.uintptr_t(resultBufSize),
 	)
 
 	if res != 0 {

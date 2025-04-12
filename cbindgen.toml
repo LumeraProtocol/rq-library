@@ -1,16 +1,16 @@
 language = "C"
 header = """
-/* RaptorQ Library - C API
+/* RQ Library - C API
  * Generated with cbindgen
  */
 """
-include_guard = "RAPTORQ_LIB_H"
+include_guard = "RQ_LIB_H"
 include_version = true
-namespace = "RaptorQ"
+namespace = "RQLibrary"
 documentation = true
 sys_includes = ["stdint.h", "stdbool.h"]
 no_includes = true
 cpp_compat = true
 
 [export]
-prefix = "raptorq"
+prefix = "rq"
