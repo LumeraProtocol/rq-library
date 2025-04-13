@@ -148,7 +148,9 @@ impl TestContext {
             
             // Delete repair symbols (keep only source_symbols count)
             for entry in files.iter().skip(result.source_symbols as usize) {
-                fs::remove_file(entry.path())?;
+                if entry.file_name() != "_raptorq_layout.json" {
+                    fs::remove_file(entry.path())?;
+                }
             }
         }
         
@@ -243,7 +245,8 @@ fn test_encode_decode(
     let _ = processor.encode_file_streamed(
         &ctx.input_path(),
         &ctx.symbols_path(),
-        chunk_size
+        chunk_size,
+        false
     ).expect("Failed to encode file");
     
     // Use the layout file that was generated during encoding
@@ -263,7 +266,9 @@ fn test_encode_decode(
 /// System test for encoding/decoding a small file (1KB)
 #[test]
 fn test_sys_encode_decode_small_file() {
-    let processor = RaptorQProcessor::new(ProcessorConfig::default());
+    let mut config = ProcessorConfig::default();
+    config.redundancy_factor = 2;
+    let processor = RaptorQProcessor::new(config);
     let file_size = 1 * 1024; // 1KB
     
     let result = test_encode_decode(file_size, &processor, 0)
@@ -344,7 +349,8 @@ fn test_sys_decode_minimum_symbols() {
     let result = processor.encode_file_streamed(
         &ctx.input_path(),
         &ctx.symbols_path(),
-        0
+        0,
+        false
     ).expect("Failed to encode file");
     
     // Delete all repair symbols, keeping only source symbols
@@ -378,7 +384,8 @@ fn test_sys_decode_redundant_symbols() {
     let _ = processor.encode_file_streamed(
         &ctx.input_path(),
         &ctx.symbols_path(),
-        0
+        0,
+        false
     ).expect("Failed to encode file");
     
     // Keep all symbols (we're testing with redundancy)
@@ -411,7 +418,8 @@ fn test_sys_decode_random_subset() {
     let result = processor.encode_file_streamed(
         &ctx.input_path(),
         &ctx.symbols_path(),
-        0
+        0,
+        false
     ).expect("Failed to encode file");
     
     // Keep a random subset of repair symbols (50% of them)
@@ -447,7 +455,8 @@ fn test_sys_error_handling_encode() {
     let result = processor.encode_file_streamed(
         &non_existent_file.to_string_lossy(),
         &ctx.symbols_path(),
-        0
+        0,
+        false
     );
     
     // Verify error is reported correctly

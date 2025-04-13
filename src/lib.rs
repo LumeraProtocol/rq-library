@@ -101,7 +101,7 @@ pub extern "C" fn raptorq_encode_file(
         None => return -4,
     };
 
-    match processor.encode_file_streamed(input_path_str, output_dir_str, chunk_size) {
+    match processor.encode_file_streamed(input_path_str, output_dir_str, chunk_size, false) {
         Ok(result) => {
             // Serialize result to JSON
             let result_json = match serde_json::to_string(&result) {

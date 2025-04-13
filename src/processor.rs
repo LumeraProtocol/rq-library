@@ -192,6 +192,7 @@ impl RaptorQProcessor {
         input_path: &str,
         output_dir: &str,
         chunk_size: usize,
+        force_single_file: bool,
     ) -> Result<ProcessResult, ProcessError> {
         // Check if we can take another task
         if !self.can_start_task() {
@@ -208,6 +209,12 @@ impl RaptorQProcessor {
         }
 
         let file_size = input_path.metadata()?.len();
+
+        // If force_single_file is true, bypass all chunking logic and always use encode_single_file
+        if force_single_file {
+            debug!("Processing file without chunking (forced): {:?} ({}B)", input_path, file_size);
+            return self.encode_single_file(input_path, output_dir);
+        }
 
         // Determine if we need to chunk the file
         let actual_chunk_size = if chunk_size == 0 {
@@ -1380,7 +1387,7 @@ mod tests {
     #[test]
     fn test_encode_file_not_found() {
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let result = processor.encode_file_streamed("non_existent_file.txt", "output_dir", 0);
+        let result = processor.encode_file_streamed("non_existent_file.txt", "output_dir", 0, false);
         
         assert!(matches!(result, Err(ProcessError::FileNotFound(_))));
     }
@@ -1398,7 +1405,8 @@ mod tests {
         let result = processor.encode_file_streamed(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
-            0
+            0,
+            false
         );
         
         assert!(matches!(result, Err(ProcessError::EncodingFailed(_))));
@@ -1420,7 +1428,8 @@ mod tests {
         let result = processor.encode_file_streamed(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
-            0 // 0 means auto-determine if chunking is needed
+            0, // 0 means auto-determine if chunking is needed
+            false
         );
         
         assert!(result.is_ok());
@@ -1449,7 +1458,8 @@ mod tests {
         let result = processor.encode_file_streamed(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
-            500 * 1024 // Larger than file size
+            500 * 1024, // Larger than file size
+            false
         );
         
         assert!(result.is_ok());
@@ -1485,7 +1495,8 @@ mod tests {
         let result = processor.encode_file_streamed(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
-            0 // Auto chunking
+            0, // Auto chunking
+            false
         );
         
         assert!(result.is_ok());
@@ -1518,7 +1529,8 @@ mod tests {
         let result = processor.encode_file_streamed(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
-            chunk_size
+            chunk_size,
+            false
         );
         
         assert!(result.is_ok());
@@ -1548,7 +1560,8 @@ mod tests {
         let result = processor.encode_file_streamed(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
-            0
+            0,
+            false
         );
         
         assert!(result.is_ok());
@@ -1580,7 +1593,8 @@ mod tests {
         let result = processor.encode_file_streamed(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
-            0 // If we force no chunking by using 0 with a small max_memory, it should fail
+            0, // chunk_size = 0
+            true // force_single_file = true, bypassing chunk size determination
         );
         
         assert!(matches!(result, Err(ProcessError::MemoryLimitExceeded { .. })));
@@ -1620,7 +1634,8 @@ mod tests {
         let result = processor.encode_file_streamed(
             &input_path_str,
             &output_dir_str,
-            0
+            0,
+            false
         );
         
         // This should fail with ConcurrencyLimitReached
@@ -1647,7 +1662,8 @@ mod tests {
         let result = processor.encode_file_streamed(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
-            0
+            0,
+            false
         );
         
         assert!(result.is_ok());
@@ -1678,7 +1694,8 @@ mod tests {
         let result = processor.encode_file_streamed(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
-            0
+            0,
+            false
         );
         
         assert!(result.is_ok());
@@ -1687,6 +1704,8 @@ mod tests {
         // Check that symbol files are created in the output directory
         let symbol_files: Vec<_> = fs::read_dir(&output_dir)
             .expect("Failed to read output dir")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name() != LAYOUT_FILENAME) // Exclude layout file from count
             .collect();
         
         assert!(!symbol_files.is_empty());
