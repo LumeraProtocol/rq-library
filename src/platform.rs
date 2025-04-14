@@ -1,9 +1,9 @@
 // platform.rs
 #[cfg(all(target_arch = "wasm32", feature = "browser-wasm"))]
 pub mod browser {
+    use std::cell::RefCell;
     use wasm_bindgen::prelude::*;
     use js_sys::{Uint8Array, Promise};
-    use web_sys::{File, Blob, FileReader};
     use wasm_bindgen_futures::JsFuture;
 
     #[wasm_bindgen]
@@ -27,16 +27,19 @@ pub mod browser {
 
     // Global filesystem access would be provided by the host
     thread_local! {
-        static FS: Option<FileSystem> = None;
+        static FS: RefCell<Option<FileSystem>> = RefCell::new(None);
     }
 
+    #[allow(dead_code)] // Called via JS or specific setup
     pub async fn read_file_async(path: &str) -> Result<Vec<u8>, JsValue> {
-        let result = FS.with(|fs| {
-            match fs {
-                Some(fs) => JsFuture::from(fs.read_file(path)),
-                None => Err(JsValue::from_str("FileSystem not initialized")).into(),
+        let future = FS.with(|cell| {
+            let fs_opt_ref = cell.borrow();
+            match *fs_opt_ref {
+                Some(ref fs) => Ok(JsFuture::from(fs.read_file(path))),
+                None => Err(JsValue::from_str("FileSystem not initialized")),
             }
         })?;
+        let result = future.await?;
 
         let array = Uint8Array::new(&result);
         let mut vec = vec![0; array.length() as usize];
@@ -44,38 +47,47 @@ pub mod browser {
         Ok(vec)
     }
 
+    #[allow(dead_code)] // Called via JS or specific setup
     pub async fn write_file_async(path: &str, data: &[u8]) -> Result<(), JsValue> {
         let array = Uint8Array::new_with_length(data.len() as u32);
         array.copy_from(data);
 
-        FS.with(|fs| {
-            match fs {
-                Some(fs) => JsFuture::from(fs.write_file(path, &array)),
-                None => Err(JsValue::from_str("FileSystem not initialized")).into(),
+        let future = FS.with(|cell| {
+            let fs_opt_ref = cell.borrow();
+            match *fs_opt_ref {
+                Some(ref fs) => Ok(JsFuture::from(fs.write_file(path, &array))),
+                None => Err(JsValue::from_str("FileSystem not initialized")),
             }
         })?;
+        future.await?;
 
         Ok(())
     }
 
+    #[allow(dead_code)] // Called via JS or specific setup
     pub async fn create_dir_all_async(path: &str) -> Result<(), JsValue> {
-        FS.with(|fs| {
-            match fs {
-                Some(fs) => JsFuture::from(fs.mkdir(path)),
-                None => Err(JsValue::from_str("FileSystem not initialized")).into(),
+        let future = FS.with(|cell| {
+            let fs_opt_ref = cell.borrow();
+            match *fs_opt_ref {
+                Some(ref fs) => Ok(JsFuture::from(fs.mkdir(path))),
+                None => Err(JsValue::from_str("FileSystem not initialized")),
             }
         })?;
+        future.await?;
 
         Ok(())
     }
 
+    #[allow(dead_code)] // Called via JS or specific setup
     pub async fn file_size_async(path: &str) -> Result<u64, JsValue> {
-        let result = FS.with(|fs| {
-            match fs {
-                Some(fs) => JsFuture::from(fs.stat(path)),
-                None => Err(JsValue::from_str("FileSystem not initialized")).into(),
+        let future = FS.with(|cell| {
+            let fs_opt_ref = cell.borrow();
+            match *fs_opt_ref {
+                Some(ref fs) => Ok(JsFuture::from(fs.stat(path))),
+                None => Err(JsValue::from_str("FileSystem not initialized")),
             }
         })?;
+        let result = future.await?;
 
         // The result is a JS object with a size property
         let size = js_sys::Reflect::get(&result, &JsValue::from_str("size"))?;
@@ -83,9 +95,10 @@ pub mod browser {
     }
 
     // Function to set the file system
-    pub fn set_filesystem(fs: FileSystem) {
+    #[allow(dead_code)] // Called via JS or specific setup
+    fn set_filesystem(fs: FileSystem) { // Make private to the module
         FS.with(|cell| {
-            *cell.borrow_mut() = Some(fs);
+            *cell.borrow_mut() = Some(fs); // Now cell is &RefCell<Option<FileSystem>>
         });
     }
 }

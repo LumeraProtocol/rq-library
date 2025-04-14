@@ -16,7 +16,7 @@ fi
 rustup target add wasm32-unknown-emscripten
 
 # Build the library with Emscripten
-cargo build --target wasm32-unknown-emscripten --release --features browser-wasm
+RUSTFLAGS='-C link-arg=-sSIDE_MODULE=1' cargo build --target wasm32-unknown-emscripten --release --features browser-wasm
 
 # Copy output files to dist directory
 #mkdir -p dist/browser
