@@ -65,8 +65,10 @@ pub struct ChunkLayout {
     pub symbols: Vec<String>,
 }
 
+const DEFAULT_SYMBOL_SIZE: u16 = 65535; // 64 KiB
+const DEFAULT_REDUNDANCY_FACTOR: u8 = 4;
 const DEFAULT_STREAM_BUFFER_SIZE: usize = 1 * 1024 * 1024; // 1 MiB
-const DEFAULT_MAX_MEMORY: u64 = 1024; // 1 GB
+const DEFAULT_MAX_MEMORY: u64 = 16*1024; // 16 GB
 const DEFAULT_CONCURRENCY_LIMIT: u64 = 4;
 const MEMORY_SAFETY_MARGIN: f64 = 1.5; // 50% safety margin
 
@@ -87,11 +89,96 @@ pub struct ProcessorConfig {
     pub concurrency_limit: u64,
 }
 
+/// Use:
+///  64 KB for files <=  1MB                    No chunking!!!         16 symbols
+/// 128 KB for files >   1MB and <=   5 MB      No chunking!!!       8-40 symbols
+/// 256 KB for files >   5MB and <=  10 MB                          20-40 symbols                
+///   1 MB for files >  10MB and <= 100 MB                         10-100 symbols
+///   2 MB for files > 100MB and <=   1 GB                         50-500 symbols
+///   4 MB for files >   1GB and <=   5 GB                       250-1250 symbols
+///   8 MB for files >   5GB and <=  10 GB                       625-1250 symbols
+///  16 MB for files >  10GB and <= 100 GB                       625-6250 symbols
+///  32 MB for files > 100GB and <=   1 TB                     3125-31250 symbols
 impl Default for ProcessorConfig {
     fn default() -> Self {
         Self {
-            symbol_size: 50_000,
-            redundancy_factor: 12,
+            symbol_size: DEFAULT_SYMBOL_SIZE, // 64 KiB
+            redundancy_factor: 4,
+            max_memory_mb: DEFAULT_MAX_MEMORY,
+            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
+        }
+    }
+}
+
+impl ProcessorConfig {
+    pub fn default5_mb() -> Self {
+        Self {
+            symbol_size: 65535, // 64 KiB
+//            symbol_size: 128 * 1024, // 128 KiB
+            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
+            max_memory_mb: DEFAULT_MAX_MEMORY,
+            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
+        }
+    }
+    pub fn default10_mb() -> Self {
+        Self {
+            symbol_size: 65535, // 64 KiB
+  //          symbol_size: 256 * 1024, // 256 KiB
+            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
+            max_memory_mb: DEFAULT_MAX_MEMORY,
+            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
+        }
+    }
+    pub fn default100_mb() -> Self {
+        Self {
+            symbol_size: 65535, // 64 KiB
+    //        symbol_size: 1024 * 1024, // 1 MiB
+            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
+            max_memory_mb: DEFAULT_MAX_MEMORY,
+            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
+        }
+    }
+    pub fn default1_gb() -> Self {
+        Self {
+            symbol_size: 65535, // 64 KiB
+    //        symbol_size: 2 * 1024 * 1024, // 2 MiB
+            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
+            max_memory_mb: DEFAULT_MAX_MEMORY,
+            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
+        }
+    }
+    pub fn default5_gb() -> Self {
+        Self {
+            symbol_size: 65535, // 64 KiB
+//            symbol_size: 4 * 1024 * 1024, // 4 MiB
+            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
+            max_memory_mb: DEFAULT_MAX_MEMORY,
+            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
+        }
+    }
+    pub fn default10_gb() -> Self {
+        Self {
+            symbol_size: 65535, // 64 KiB
+  //          symbol_size: 8 * 1024 * 1024, // 8 MiB
+            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
+            max_memory_mb: DEFAULT_MAX_MEMORY,
+            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
+        }
+    }
+    pub fn default100_gb() -> Self {
+        Self {
+            symbol_size: 65535, // 64 KiB
+    //        symbol_size: 16 * 1024 * 1024, // 16 MiB
+            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
+            max_memory_mb: DEFAULT_MAX_MEMORY,
+            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
+        }
+    }
+    pub fn default1_tb() -> Self {
+        Self {
+            symbol_size: 65535, // 64 KiB
+//            symbol_size: 32 * 1024 * 1024, // 32 MiB
+            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
             max_memory_mb: DEFAULT_MAX_MEMORY,
             concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
         }
@@ -130,6 +217,7 @@ pub struct ProcessResult {
     pub symbols_directory: String,
     pub symbols_count: u64,
     pub chunks: Option<Vec<ChunkInfo>>,
+    pub layout_file_path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -314,6 +402,7 @@ impl RaptorQProcessor {
             symbols_directory: output_dir.to_string(),
             symbols_count: symbol_ids.len() as u64,
             chunks: None,
+            layout_file_path: layout_path.to_string_lossy().to_string(),
         })
     }
 
@@ -440,6 +529,7 @@ impl RaptorQProcessor {
             symbols_directory: output_dir.to_string(),
             symbols_count: total_symbols_count,
             chunks: Some(chunks),
+            layout_file_path: layout_path.to_string_lossy().to_string(),
         })
     }
 
@@ -636,49 +726,6 @@ impl RaptorQProcessor {
                 debug!("Layout file exists but has no chunks field, using basic chunked decoding");
                 self.decode_chunked_file_internal(&chunks, output_path, &encoder_params)
             }
-        }
-    }
-
-    /// Decode symbols using an encoder_params array (backward compatibility for tests)
-    ///
-    /// This is a compatibility wrapper for the old API signature that works with the
-    /// signature used by the tests.
-    pub fn decode_symbols_with_params(
-        &self,
-        symbols_dir: &str,
-        output_path: &str,
-        encoder_params: &[u8; 12],
-    ) -> Result<(), ProcessError> {
-        // Check if we can take another task
-        if !self.can_start_task() {
-            return Err(ProcessError::ConcurrencyLimitReached);
-        }
-
-        let _guard = TaskGuard::new(&self.active_tasks);
-
-        let symbols_dir_path = Path::new(symbols_dir);
-        if !symbols_dir_path.exists() {
-            let err = format!("Symbols directory not found: {:?}", symbols_dir_path);
-            self.set_last_error(err.clone());
-            return Err(ProcessError::FileNotFound(err));
-        }
-
-        // Check if this is a chunked file
-        let mut chunks = Vec::new();
-        for entry in fs::read_dir(symbols_dir_path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() && path.file_name().unwrap().to_string_lossy().starts_with("chunk_") {
-                chunks.push(path);
-            }
-        }
-
-        if chunks.is_empty() {
-            // No chunks, decode as a single file
-            self.decode_single_file_internal(symbols_dir_path, output_path, encoder_params, None)
-        } else {
-            // Chunked file, use the chunked decoding method
-            self.decode_chunked_file_internal(&chunks, output_path, encoder_params)
         }
     }
 
@@ -1182,8 +1229,8 @@ mod tests {
     fn test_config_default() {
         let config = ProcessorConfig::default();
         
-        assert_eq!(config.symbol_size, 50_000);
-        assert_eq!(config.redundancy_factor, 12);
+        assert_eq!(config.symbol_size, DEFAULT_SYMBOL_SIZE);
+        assert_eq!(config.redundancy_factor, DEFAULT_REDUNDANCY_FACTOR);
         assert_eq!(config.max_memory_mb, DEFAULT_MAX_MEMORY);
         assert_eq!(config.concurrency_limit, DEFAULT_CONCURRENCY_LIMIT);
     }
@@ -1263,8 +1310,8 @@ mod tests {
     #[test]
     fn test_chunk_size_large_file() {
         let config = ProcessorConfig {
-            symbol_size: 50_000,
-            redundancy_factor: 12,
+            symbol_size: DEFAULT_SYMBOL_SIZE,
+            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
             max_memory_mb: 100, // Deliberately small to force chunking
             concurrency_limit: 4,
         };
@@ -1284,26 +1331,26 @@ mod tests {
         // Create an array of processor configs with different memory limits
         let configs = [
             ProcessorConfig {
-                symbol_size: 50_000,
-                redundancy_factor: 12,
+                symbol_size: DEFAULT_SYMBOL_SIZE,
+                redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
                 max_memory_mb: 8_000, // 8GB
                 concurrency_limit: 4,
             },
             ProcessorConfig {
-                symbol_size: 50_000,
-                redundancy_factor: 12,
+                symbol_size: DEFAULT_SYMBOL_SIZE,
+                redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
                 max_memory_mb: 16_000, // 16GB
                 concurrency_limit: 4,
             },
             ProcessorConfig {
-                symbol_size: 50_000,
-                redundancy_factor: 12,
+                symbol_size: DEFAULT_SYMBOL_SIZE,
+                redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
                 max_memory_mb: 32_000, // 32GB
                 concurrency_limit: 4,
             },
             ProcessorConfig {
-                symbol_size: 50_000,
-                redundancy_factor: 12,
+                symbol_size: DEFAULT_SYMBOL_SIZE,
+                redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
                 max_memory_mb: 64_000, // 64GB
                 concurrency_limit: 4,
             },
@@ -1485,8 +1532,8 @@ mod tests {
         create_test_file(&input_path, 3 * 1024 * 1024).expect("Failed to create test file");
         
         let config = ProcessorConfig {
-            symbol_size: 50_000,
-            redundancy_factor: 12,
+            symbol_size: DEFAULT_SYMBOL_SIZE,
+            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
             max_memory_mb: 1, // Very small memory limit to force chunking
             concurrency_limit: 4,
         };
@@ -1583,8 +1630,8 @@ mod tests {
         
         // Create processor with tiny memory limit
         let config = ProcessorConfig {
-            symbol_size: 50_000,
-            redundancy_factor: 12,
+            symbol_size: DEFAULT_SYMBOL_SIZE,
+            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
             max_memory_mb: 1, // 1 MB max memory
             concurrency_limit: 4,
         };
@@ -1614,8 +1661,8 @@ mod tests {
         
         // Create processor with concurrency limit of 1
         let config = ProcessorConfig {
-            symbol_size: 50_000,
-            redundancy_factor: 12,
+            symbol_size: DEFAULT_SYMBOL_SIZE,
+            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
             max_memory_mb: DEFAULT_MAX_MEMORY,
             concurrency_limit: 1,
         };
@@ -1720,15 +1767,10 @@ mod tests {
     #[test]
     fn test_decode_symbols_dir_not_found() {
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let config = ObjectTransmissionInformation::with_defaults(1024, 128);
-        let encoder_params_vec = config.serialize().to_vec();
-        let mut encoder_params = [0; 12];
-        encoder_params.copy_from_slice(&encoder_params_vec);
-
-        let result = processor.decode_symbols_with_params(
+        let result = processor.decode_symbols(
             "non_existent_dir",
             "output.bin",
-            &encoder_params
+            "layout.json"
         );
         
         assert!(matches!(result, Err(ProcessError::FileNotFound(_))));
@@ -1739,20 +1781,28 @@ mod tests {
         let (temp_dir, dir_path) = create_temp_dir();
         let symbols_dir = dir_path.join("symbols");
         let output_path = dir_path.join("output.bin");
+        let layout_path = dir_path.join("layout.json");
         
         // Create an empty directory
         fs::create_dir(&symbols_dir).expect("Failed to create symbols directory");
-        
-        let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let config = ObjectTransmissionInformation::with_defaults(1024, 128);
-        let encoder_params_vec = config.serialize().to_vec();
-        let mut encoder_params = [0; 12]; 
-        encoder_params.copy_from_slice(&encoder_params_vec);
 
-        let result = processor.decode_symbols_with_params(
+        // create fake layout file
+        let config = ObjectTransmissionInformation::with_defaults(1024, 128);
+        let packets = vec![vec![0; 128]; 10];
+        let layout = RaptorQLayout {
+            encoder_parameters: config.serialize().to_vec(),
+            chunks: None,
+            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+        };
+        //write layout file
+        let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
+        fs::write(&layout_path, layout_json).expect("Failed to write layout file");
+
+        let processor = RaptorQProcessor::new(ProcessorConfig::default());
+        let result = processor.decode_symbols(
             symbols_dir.to_str().unwrap(),
             output_path.to_str().unwrap(),
-            &encoder_params
+            layout_path.to_str().unwrap()
         );
         
         assert!(matches!(result, Err(ProcessError::DecodingFailed(_))));
@@ -1776,7 +1826,7 @@ mod tests {
         // Create encoded symbols
         let (encoder_params, packets) = encode_test_data(
             &original_data,
-            50_000,
+            DEFAULT_SYMBOL_SIZE,
             10
         );
         
@@ -1840,7 +1890,7 @@ mod tests {
             // Encode chunk
             let (params, packets) = encode_test_data(
                 &chunk_data,
-                50_000,
+                DEFAULT_SYMBOL_SIZE,
                 5
             );
             
@@ -1852,8 +1902,8 @@ mod tests {
             // Create symbol files for this chunk
             create_symbol_files(&chunk_dir, &packets).expect("Failed to create symbol files");
 
-        // Create layout file with chunk information
-        let chunk_id = format!("chunk_{}", i);
+            // Create layout file with chunk information
+            let chunk_id = format!("chunk_{}", i);
             let chunk_layout = ChunkLayout {
                 chunk_id,
                 original_offset: (i * chunk_size) as u64,
@@ -1908,7 +1958,7 @@ mod tests {
         // This should not be enough for decoding
         let (encoder_params, mut packets) = encode_test_data(
             &original_data,
-            50_000,
+            DEFAULT_SYMBOL_SIZE,
             10
         );
         
@@ -1960,7 +2010,7 @@ mod tests {
         // Create encoded symbols
         let (encoder_params, mut packets) = encode_test_data(
             &original_data,
-            50_000,
+            DEFAULT_SYMBOL_SIZE,
             10
         );
         
@@ -2028,7 +2078,7 @@ mod tests {
         // Create encoded symbols
         let (_, packets) = encode_test_data(
             &original_data,
-            50_000,
+            DEFAULT_SYMBOL_SIZE,
             10
         );
         
@@ -2273,8 +2323,8 @@ mod tests {
     #[test]
     fn test_is_memory_available_logic() {
         let config = ProcessorConfig {
-            symbol_size: 50_000,
-            redundancy_factor: 12,
+            symbol_size: DEFAULT_SYMBOL_SIZE,
+            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
             max_memory_mb: 100,
             concurrency_limit: 4,
         };
