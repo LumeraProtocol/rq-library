@@ -19,8 +19,8 @@ rustup target add wasm32-unknown-emscripten
 cargo build --target wasm32-unknown-emscripten --release --features browser-wasm
 
 # Copy output files to dist directory
-mkdir -p dist/browser
-cp target/wasm32-unknown-emscripten/release/raptorq_lib.js dist/browser/
-cp target/wasm32-unknown-emscripten/release/raptorq_lib.wasm dist/browser/
-
-echo "Browser WASM build completed. Output files in dist/browser/"
+#mkdir -p dist/browser
+#cp target/wasm32-unknown-emscripten/release/raptorq_lib.js dist/browser/
+#cp target/wasm32-unknown-emscripten/release/raptorq_lib.wasm dist/browser/
+#
+#echo "Browser WASM build completed. Output files in dist/browser/"

@@ -2,10 +2,9 @@
 #[cfg(all(target_arch = "wasm32", feature = "browser-wasm"))]
 pub mod browser {
     use wasm_bindgen::prelude::*;
-    use js_sys::{Array, Uint8Array, Promise};
+    use js_sys::{Uint8Array, Promise};
     use web_sys::{File, Blob, FileReader};
     use wasm_bindgen_futures::JsFuture;
-    use std::io;
 
     #[wasm_bindgen]
     extern "C" {

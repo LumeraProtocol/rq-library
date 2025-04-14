@@ -1,3 +1,4 @@
+//wasm_browser.rs
 #[cfg(all(target_arch = "wasm32", feature = "browser-wasm"))]
 mod wasm_browser {
     use wasm_bindgen::prelude::*;
@@ -78,11 +79,19 @@ mod wasm_browser {
                 let encoder_params = Uint8Array::new_with_length(result.encoder_parameters.len() as u32);
                 encoder_params.copy_from(&result.encoder_parameters);
                 js_sys::Reflect::set(&js_result, &JsValue::from_str("encoderParameters"), &encoder_params)?;
-
                 js_sys::Reflect::set(&js_result, &JsValue::from_str("sourceSymbols"), &JsValue::from_f64(result.source_symbols as f64))?;
                 js_sys::Reflect::set(&js_result, &JsValue::from_str("repairSymbols"), &JsValue::from_f64(result.repair_symbols as f64))?;
                 js_sys::Reflect::set(&js_result, &JsValue::from_str("symbolsDirectory"), &JsValue::from_str(&result.symbols_directory))?;
                 js_sys::Reflect::set(&js_result, &JsValue::from_str("symbolsCount"), &JsValue::from_f64(result.symbols_count as f64))?;
+
+                if let Some(chunks) = &result.chunks {
+                    let js_chunks = to_value(&chunks)?;
+                    js_sys::Reflect::set(&js_result, &JsValue::from_str("chunks"), &js_chunks)?;
+                } else {
+                    js_sys::Reflect::set(&js_result, &JsValue::from_str("chunks"), &JsValue::null())?;
+                }
+
+                js_sys::Reflect::set(&js_result, &JsValue::from_str("layoutFilePath"), &JsValue::from_str(&result.layout_file_path))?;
 
                 Ok(js_result.into())
             })
@@ -90,16 +99,12 @@ mod wasm_browser {
 
         // Decode symbols
         #[wasm_bindgen]
-        pub fn decode_symbols(&self, symbols_dir: String, output_path: String, encoder_params: Uint8Array) -> Promise {
+        pub fn decode_symbols(&self, symbols_dir: String, output_path: String, layout_path: String) -> Promise {
             let processor = self.processor.clone();
 
             future_to_promise(async move {
-                // Convert encoder parameters
-                let mut params = [0u8; 12];
-                encoder_params.copy_to(&mut params);
-
                 // Decode
-                processor.decode_symbols_browser(&symbols_dir, &output_path, &params).await?;
+                processor.decode_symbols_browser(&symbols_dir, &output_path, &layout_path).await?;
 
                 Ok(JsValue::from_bool(true))
             })

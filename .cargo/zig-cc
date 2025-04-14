@@ -1,0 +1,23 @@
+#!/bin/bash
+args=()
+skip_next=0
+for arg in "$@"; do
+  if [ $skip_next -eq 1 ]; then
+    skip_next=0
+    continue
+  fi
+  if [ "$arg" = "-Wl,-exported_symbols_list" ]; then
+    skip_next=1
+    continue
+  fi
+  args+=("$arg")
+done
+mapped_target="$TARGET"
+if [[ "$mapped_target" == "aarch64-apple-ios"* ]] || [[ "$mapped_target" == "arm64-apple-ios"* ]]; then
+  mapped_target="aarch64-ios"
+fi
+if [ -n "$mapped_target" ]; then
+  exec zig cc --target="$mapped_target" "${args[@]}"
+else
+  exec zig cc "${args[@]}"
+fi
