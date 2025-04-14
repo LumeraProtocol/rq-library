@@ -114,16 +114,6 @@ uintptr_t raptorq_get_recommended_chunk_size(uintptr_t session_id, uint64_t file
  */
 int32_t raptorq_version(char *version_buffer, uintptr_t version_buffer_len);
 
-extern void log(const rqstr *s);
-
-extern rqPromise read_file(const rqFileSystem *this_, const rqstr *path);
-
-extern rqPromise write_file(const rqFileSystem *this_, const rqstr *path, const rqUint8Array *data);
-
-extern rqPromise mkdir(const rqFileSystem *this_, const rqstr *path);
-
-extern rqPromise stat(const rqFileSystem *this_, const rqstr *path);
-
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

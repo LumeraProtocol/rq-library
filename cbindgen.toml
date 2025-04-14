@@ -13,4 +13,21 @@ no_includes = true
 cpp_compat = true
 
 [export]
-prefix = "rq"
+# Only include the functions intended for the C FFI
+include = [
+    "raptorq_init_session",
+    "raptorq_free_session",
+    "raptorq_encode_file",
+    "raptorq_get_last_error",
+    "raptorq_decode_symbols",
+    "raptorq_get_recommended_chunk_size",
+    "raptorq_version",
+]
+# Also explicitly exclude functions from platform.rs that are not part of the C FFI
+exclude = [
+    "log",
+    "read_file",
+    "write_file",
+    "mkdir",
+    "stat",
+]
