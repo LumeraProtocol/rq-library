@@ -22,8 +22,8 @@ fn generate_random_file(path: &Path, size_bytes: usize) -> std::io::Result<()> {
     let seed = [42u8; 32];
     let mut rng = StdRng::from_seed(seed);
     
-    // Generate and write data in chunks to avoid excessive memory usage
-    const CHUNK_SIZE: usize = 1024 * 1024; // 1 MB chunks
+    // Generate and write data in blocks to avoid excessive memory usage
+    const CHUNK_SIZE: usize = 1024 * 1024; // 1 MB blocks
     let mut buffer = vec![0u8; std::cmp::min(CHUNK_SIZE, size_bytes)];
     
     let mut remaining = size_bytes;
@@ -120,11 +120,11 @@ impl TestContext {
     /// Delete repair symbols from the symbols directory
     /// (leaving only source symbols)
     fn delete_repair_symbols(&self, result: &ProcessResult) -> std::io::Result<()> {
-        if let Some(chunks) = &result.chunks {
+        if let Some(blocks) = &result.blocks {
             // For chunked encoding
-            for chunk in chunks {
-                let chunk_dir = self.symbols_dir.join(&chunk.chunk_id);
-                let entries = fs::read_dir(&chunk_dir)?;
+            for chunk in blocks {
+                let block_dir = self.symbols_dir.join(&chunk.block_id);
+                let entries = fs::read_dir(&block_dir)?;
                 
                 // Keep only source symbols (based on count)
                 let source_symbols = chunk.symbols_count - result.repair_symbols;
@@ -165,11 +165,11 @@ impl TestContext {
     ) -> std::io::Result<()> {
         let mut rng = rand::thread_rng();
         
-        if let Some(chunks) = &result.chunks {
+        if let Some(blocks) = &result.blocks {
             // For chunked encoding
-            for chunk in chunks {
-                let chunk_dir = self.symbols_dir.join(&chunk.chunk_id);
-                let entries = fs::read_dir(&chunk_dir)?;
+            for chunk in blocks {
+                let block_dir = self.symbols_dir.join(&chunk.block_id);
+                let entries = fs::read_dir(&block_dir)?;
                 // Collect file entries and their paths
                 let files: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
                 let source_symbols = (chunk.symbols_count - result.repair_symbols) as usize;
@@ -236,7 +236,7 @@ impl TestContext {
 fn test_encode_decode(
     file_size_bytes: usize, 
     processor: &RaptorQProcessor, 
-    chunk_size: usize
+    block_size: usize
 ) -> std::io::Result<bool> {
     // Create test context with input file
     let ctx = TestContext::new(file_size_bytes)?;
@@ -245,7 +245,7 @@ fn test_encode_decode(
     let _ = processor.encode_file_streamed(
         &ctx.input_path(),
         &ctx.symbols_path(),
-        chunk_size,
+        block_size,
         false
     ).expect("Failed to encode file");
     
@@ -314,9 +314,9 @@ fn test_sys_encode_decode_large_file_auto_chunk() {
 fn test_sys_encode_decode_large_file_manual_chunk() {
     let processor = RaptorQProcessor::new(ProcessorConfig::default());
     let file_size = 100 * 1024 * 1024; // 100MB
-    let chunk_size = 10 * 1024 * 1024; // 10MB chunks
+    let block_size = 10 * 1024 * 1024; // 10MB blocks
     
-    let result = test_encode_decode(file_size, &processor, chunk_size)
+    let result = test_encode_decode(file_size, &processor, block_size)
         .expect("Test failed with IO error");
     
     assert!(result, "Decoded file does not match original");
@@ -328,9 +328,9 @@ fn test_sys_encode_decode_large_file_manual_chunk() {
 fn test_sys_encode_decode_very_large_file() {
     let processor = RaptorQProcessor::new(ProcessorConfig::default());
     let file_size = 1024 * 1024 * 1024; // 1GB
-    let chunk_size = 50 * 1024 * 1024; // 50MB chunks
+    let block_size = 50 * 1024 * 1024; // 50MB blocks
     
-    let result = test_encode_decode(file_size, &processor, chunk_size)
+    let result = test_encode_decode(file_size, &processor, block_size)
         .expect("Test failed with IO error");
     
     assert!(result, "Decoded file does not match original");

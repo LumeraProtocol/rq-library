@@ -60,7 +60,7 @@ pub extern "C" fn raptorq_free_session(session_id: usize) -> bool {
 /// * `session_id` - Session ID returned from raptorq_init_session
 /// * `input_path` - Path to the input file
 /// * `output_dir` - Directory where symbols will be written
-/// * `chunk_size` - Size of chunks to process at once (0 = auto)
+/// * `block_size` - Size of blocks to process at once (0 = auto)
 /// * `result_buffer` - Buffer to store the result (JSON metadata)
 /// * `result_buffer_len` - Length of the result buffer
 ///
@@ -76,7 +76,7 @@ pub extern "C" fn raptorq_encode_file(
     session_id: usize,
     input_path: *const c_char,
     output_dir: *const c_char,
-    chunk_size: usize,
+    block_size: usize,
     result_buffer: *mut c_char,
     result_buffer_len: usize,
 ) -> i32 {
@@ -101,7 +101,7 @@ pub extern "C" fn raptorq_encode_file(
         None => return -4,
     };
 
-    match processor.encode_file_streamed(input_path_str, output_dir_str, chunk_size, false) {
+    match processor.encode_file_streamed(input_path_str, output_dir_str, block_size, false) {
         Ok(result) => {
             // Serialize result to JSON
             let result_json = match serde_json::to_string(&result) {
@@ -271,7 +271,7 @@ pub extern "C" fn raptorq_get_recommended_chunk_size(
         None => return 0,
     };
 
-    processor.get_recommended_chunk_size(file_size)
+    processor.get_recommended_block_size(file_size)
 }
 
 /// Version information

@@ -48,7 +48,7 @@ mod wasm_browser {
 
         // Encode a file
         #[wasm_bindgen]
-        pub fn encode_file(&self, input_path: String, output_dir: String, chunk_size: usize) -> Promise {
+        pub fn encode_file(&self, input_path: String, output_dir: String, block_size: usize) -> Promise {
             let processor = self.processor.clone();
 
             future_to_promise(async move {
@@ -59,17 +59,17 @@ mod wasm_browser {
                 let file_size = browser::file_size_async(&input_path).await?;
 
                 // Calculate actual chunk size
-                let actual_chunk_size = if chunk_size == 0 {
-                    processor.get_recommended_chunk_size(file_size)
+                let actual_block_size = if block_size == 0 {
+                    processor.get_recommended_block_size(file_size)
                 } else {
-                    chunk_size
+                    block_size
                 };
 
                 // Use file paths in the browser-provided filesystem
-                let result = if actual_chunk_size == 0 {
+                let result = if actual_block_size == 0 {
                     processor.encode_file_browser(&input_path, &output_dir).await?
                 } else {
-                    processor.encode_file_in_chunks_browser(&input_path, &output_dir, actual_chunk_size).await?
+                    processor.encode_file_in_chunks_browser(&input_path, &output_dir, actual_block_size).await?
                 };
 
                 // Convert result to JS object
@@ -84,11 +84,11 @@ mod wasm_browser {
                 js_sys::Reflect::set(&js_result, &JsValue::from_str("symbolsDirectory"), &JsValue::from_str(&result.symbols_directory))?;
                 js_sys::Reflect::set(&js_result, &JsValue::from_str("symbolsCount"), &JsValue::from_f64(result.symbols_count as f64))?;
 
-                if let Some(chunks) = &result.chunks {
-                    let js_chunks = to_value(&chunks)?;
-                    js_sys::Reflect::set(&js_result, &JsValue::from_str("chunks"), &js_chunks)?;
+                if let Some(blocks) = &result.blocks {
+                    let js_chunks = to_value(&blocks)?;
+                    js_sys::Reflect::set(&js_result, &JsValue::from_str("blocks"), &js_chunks)?;
                 } else {
-                    js_sys::Reflect::set(&js_result, &JsValue::from_str("chunks"), &JsValue::null())?;
+                    js_sys::Reflect::set(&js_result, &JsValue::from_str("blocks"), &JsValue::null())?;
                 }
 
                 js_sys::Reflect::set(&js_result, &JsValue::from_str("layoutFilePath"), &JsValue::from_str(&result.layout_file_path))?;
@@ -112,8 +112,8 @@ mod wasm_browser {
 
         // Get recommended chunk size
         #[wasm_bindgen]
-        pub fn get_recommended_chunk_size(&self, file_size: f64) -> usize {
-            self.processor.get_recommended_chunk_size(file_size as u64)
+        pub fn get_recommended_block_size(&self, file_size: f64) -> usize {
+            self.processor.get_recommended_block_size(file_size as u64)
         }
 
         // Get version

@@ -7,7 +7,7 @@ RaptorQProcessor
 ├── new()
 ├── get_last_error()
 ├── get_config()
-├── get_recommended_chunk_size()
+├── get_recommended_block_size()
 ├── encode_file_streamed()
 ├── decode_symbols()
 ├── decode_symbols_with_layout()
@@ -21,7 +21,7 @@ encode_file_streamed()
 ├── can_start_task()
 ├── TaskGuard::new()
 ├── set_last_error() [if error]
-├── get_recommended_chunk_size() [when chunk_size is 0]
+├── get_recommended_block_size() [when block_size is 0]
 │
 ├── encode_single_file() [if no chunking]
 │   ├── create_dir_all()
@@ -43,7 +43,7 @@ encode_file_streamed()
 │   ├── calculate_repair_symbols()
 │   └── return ProcessResult
 │
-└── encode_file_in_chunks() [if chunking]
+└── encode_file_in_blocks() [if chunking]
     ├── create_dir_all()
     ├── open_and_validate_file()
     ├── create_dir_all() [for each chunk]
@@ -90,7 +90,7 @@ decode_symbols()
     │       └── write_all() [write decoded data]
     │
     ├── decode_chunked_file_with_layout() [if chunked with layout]
-    │   ├── sort chunks
+    │   ├── sort blocks
     │   │
     │   ├── [For each chunk]
     │   │   ├── ObjectTransmissionInformation::deserialize()
@@ -112,7 +112,7 @@ decode_symbols()
     │   │   └── write_all() [write decoded chunk data]
     │
     └── decode_chunked_file_internal() [if chunked without detailed layout]
-        ├── sort chunks
+        ├── sort blocks
         │
         ├── [For each chunk]
         │   ├── ObjectTransmissionInformation::deserialize()

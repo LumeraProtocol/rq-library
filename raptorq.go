@@ -5,11 +5,12 @@ package raptorq
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "include/rq-library.h"
 
 // Function declarations matching the Rust library's exported functions
 extern uintptr_t raptorq_init_session(uint16_t symbol_size, uint8_t redundancy_factor, uint64_t max_memory_mb, uint64_t concurrency_limit);
 extern _Bool raptorq_free_session(uintptr_t session_id);
-extern int32_t raptorq_encode_file(uintptr_t session_id, const char *input_path, const char *output_dir, uintptr_t chunk_size, char *result_buffer, uintptr_t result_buffer_len);
+extern int32_t raptorq_encode_file(uintptr_t session_id, const char *input_path, const char *output_dir, uintptr_t block_size, char *result_buffer, uintptr_t result_buffer_len);
 extern int32_t raptorq_get_last_error(uintptr_t session_id, char *error_buffer, uintptr_t error_buffer_len);
 extern int32_t raptorq_decode_symbols(uintptr_t session_id, const char *symbols_dir, const char *output_path, const char *layout_path);
 extern uintptr_t raptorq_get_recommended_chunk_size(uintptr_t session_id, uint64_t file_size);
@@ -22,6 +23,19 @@ import (
 	"runtime"
 	"sync"
 	"unsafe"
+)
+
+// Default configuration values
+// These values match the defaults in the Rust library src/lib.rs
+const (
+	DefaultSymbolSize       uint16 = 65535
+	DefaultRedundancyFactor uint8  = 4
+	DefaultMaxMemoryMB      uint64 = 16 * 1024
+	DefaultConcurrencyLimit uint64 = 4
+
+	MaxMemoryMB_1GB uint64 = 1 * 1024
+	MaxMemoryMB_4GB uint64 = 4 * 1024
+	MaxMemoryMB_8GB uint64 = 8 * 1024
 )
 
 // Lock to protect session ID counter
@@ -47,12 +61,13 @@ type ProcessResult struct {
 	RepairSymbols    uint32  `json:"repair_symbols"`
 	SymbolsDirectory string  `json:"symbols_directory"`
 	SymbolsCount     uint32  `json:"symbols_count"`
-	Chunks           []Chunk `json:"chunks,omitempty"`
+	Chunks           []Chunk `json:"blocks,omitempty"`
+	LayoutFilePath   string  `json:"layout_file_path"`
 }
 
 // Chunk represents information about a processed chunk
 type Chunk struct {
-	ChunkID        string `json:"chunk_id"`
+	ChunkID        string `json:"block_id"`
 	OriginalOffset uint64 `json:"original_offset"`
 	Size           uint64 `json:"size"`
 	SymbolsCount   uint32 `json:"symbols_count"`
@@ -84,6 +99,16 @@ func NewRaptorQProcessor(symbolSize uint16, redundancyFactor uint8, maxMemoryMB 
 	runtime.SetFinalizer(processor, finalizeProcessor)
 
 	return processor, nil
+}
+
+// NewDefaultRaptorQProcessor creates a new RaptorQ processor with default configuration
+func NewDefaultRaptorQProcessor() (*RaptorQProcessor, error) {
+	return NewRaptorQProcessor(
+		DefaultSymbolSize,
+		DefaultRedundancyFactor,
+		DefaultMaxMemoryMB,
+		DefaultConcurrencyLimit,
+	)
 }
 
 // Free manually frees the RaptorQ session

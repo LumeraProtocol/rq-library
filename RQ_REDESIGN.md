@@ -52,12 +52,12 @@ To enable precise decoding of chunked files, the encoder emits a metadata file `
 ```rust
 pub struct RaptorQLayout {
     pub encoder_parameters: Vec<u8>,
-    pub chunks: Option<Vec<ChunkLayout>>,
+    pub blocks: Option<Vec<BlockLayout>>,
     pub symbols: Option<Vec<String>>,
 }
 
-pub struct ChunkLayout {
-    pub chunk_id: String,
+pub struct BlockLayout {
+    pub block_id: String,
     pub original_offset: u64,
     pub size: u64,
     pub symbols: Vec<String>,
@@ -69,9 +69,9 @@ pub struct ChunkLayout {
 ```json
 {
   "encoder_parameters": [/* 12 bytes */],
-  "chunks": [
-    { "chunk_id": "chunk_0", "original_offset": 0, "size": 102400, "symbols": ["hash1", "hash2"] },
-    { "chunk_id": "chunk_1", "original_offset": 102400, "size": 97600, "symbols": ["hash3", "hash4"] }
+  "blocks": [
+    { "block_id": "chunk_0", "original_offset": 0, "size": 102400, "symbols": ["hash1", "hash2"] },
+    { "block_id": "chunk_1", "original_offset": 102400, "size": 97600, "symbols": ["hash3", "hash4"] }
   ],
   "symbols": null
 }
@@ -82,7 +82,7 @@ pub struct ChunkLayout {
 ```json
 {
   "encoder_parameters": [/* 12 bytes */],
-  "chunks": null,
+  "blocks": null,
   "symbols": ["hash1", "hash2", "hash3"]
 }
 ```
@@ -96,7 +96,7 @@ graph TD
   A[Input File] --> B{Chunk?}
   B -- No --> C[encode_single_file]
   C --> D[encode_stream]
-  B -- Yes --> E[encode_file_in_chunks]
+  B -- Yes --> E[encode_file_in_blocks]
   E --> F[encode_stream per chunk]
   D & F --> G[Collect Symbol IDs + Params]
   G --> H[Create RaptorQLayout Struct]

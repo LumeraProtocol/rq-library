@@ -40,7 +40,7 @@ bool raptorq_free_session(uintptr_t session_id);
  * * `session_id` - Session ID returned from raptorq_init_session
  * * `input_path` - Path to the input file
  * * `output_dir` - Directory where symbols will be written
- * * `chunk_size` - Size of chunks to process at once (0 = auto)
+ * * `block_size` - Size of blocks to process at once (0 = auto)
  * * `result_buffer` - Buffer to store the result (JSON metadata)
  * * `result_buffer_len` - Length of the result buffer
  *
@@ -55,7 +55,7 @@ bool raptorq_free_session(uintptr_t session_id);
 int32_t raptorq_encode_file(uintptr_t session_id,
                             const char *input_path,
                             const char *output_dir,
-                            uintptr_t chunk_size,
+                            uintptr_t block_size,
                             char *result_buffer,
                             uintptr_t result_buffer_len);
 

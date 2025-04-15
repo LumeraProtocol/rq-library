@@ -92,7 +92,7 @@ func (ctx *TestContext) DeleteRepairSymbols(t *testing.T, result *ProcessResult)
 
 			// Delete repair symbols (keep only source symbols count)
 			// Calculate source symbols count based on total symbols and repair symbols
-			// Note: This assumes RepairSymbols is consistent across chunks, which might not always be true.
+			// Note: This assumes RepairSymbols is consistent across blocks, which might not always be true.
 			// A more robust approach would involve parsing the layout file if needed.
 			sourceSymbols := int(chunk.SymbolsCount) - int(result.RepairSymbols) // Assuming RepairSymbols is per-chunk or consistent
 			for i := sourceSymbols; i < len(fileNames); i++ {
@@ -253,8 +253,8 @@ func generateRandomFile(path string, sizeBytes int) error {
 	// Use a seeded RNG for reproducibility
 	r := rand.New(rand.NewSource(42))
 
-	// Generate and write data in chunks to avoid excessive memory usage
-	const chunkSize = 1024 * 1024 // 1 MB chunks
+	// Generate and write data in blocks to avoid excessive memory usage
+	const chunkSize = 1024 * 1024 // 1 MB blocks
 	buffer := make([]byte, min(chunkSize, sizeBytes))
 
 	remaining := sizeBytes
@@ -331,16 +331,12 @@ func testEncodeDecodeFile(t *testing.T, processor *RaptorQProcessor, fileSizeByt
 	defer ctx.Cleanup()
 
 	// Encode the file
-	_, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, chunkSize)
+	res, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, chunkSize)
 	if err != nil {
 		t.Fatalf("Failed to encode file: %v", err)
 	}
 
-	// Construct layout file path
-	layoutPath := filepath.Join(ctx.SymbolsDir, "_raptorq_layout.json")
-	if _, err := os.Stat(layoutPath); os.IsNotExist(err) {
-		t.Fatalf("Layout file not found at %s after encoding", layoutPath)
-	}
+	layoutPath := res.LayoutFilePath
 
 	// Decode the symbols using the layout file path
 	err = processor.DecodeSymbols(ctx.SymbolsDir, ctx.OutputFile, layoutPath)
@@ -355,7 +351,7 @@ func testEncodeDecodeFile(t *testing.T, processor *RaptorQProcessor, fileSizeByt
 // System test for encoding/decoding a small file (1KB)
 func TestSysEncodeDecodeSmallFile(t *testing.T) {
 	// Create RaptorQ processor with default settings
-	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
@@ -375,7 +371,7 @@ func TestSysEncodeDecodeSmallFile(t *testing.T) {
 // System test for encoding/decoding a medium file (10MB)
 func TestSysEncodeMediumFile(t *testing.T) {
 	// Create RaptorQ processor with default settings
-	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
@@ -395,7 +391,7 @@ func TestSysEncodeMediumFile(t *testing.T) {
 // System test for encoding/decoding a large file with auto-chunking (100MB)
 func TestSysEncodeLargeFileAutoChunk(t *testing.T) {
 	// Create RaptorQ processor with small memory limit to force auto-chunking
-	processor, err := NewRaptorQProcessor(50000, 10, 10, 4)
+	processor, err := NewRaptorQProcessor(DefaultSymbolSize, DefaultRedundancyFactor, MaxMemoryMB_4GB, DefaultConcurrencyLimit)
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
@@ -415,7 +411,7 @@ func TestSysEncodeLargeFileAutoChunk(t *testing.T) {
 // System test for encoding/decoding a large file with manual chunking (100MB)
 func TestSysEncodeLargeFileManualChunk(t *testing.T) {
 	// Create RaptorQ processor with default settings
-	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
@@ -426,7 +422,7 @@ func TestSysEncodeLargeFileManualChunk(t *testing.T) {
 	}()
 
 	fileSize := 100 * 1024 * 1024 // 100MB
-	chunkSize := 10 * 1024 * 1024 // 10MB chunks
+	chunkSize := 10 * 1024 * 1024 // 10MB blocks
 	result := testEncodeDecodeFile(t, processor, fileSize, chunkSize)
 	if !result {
 		t.Fatal("Decoded file does not match original")
@@ -441,7 +437,7 @@ func TestSysEncodeVeryLargeFile(t *testing.T) {
 	}
 
 	// Create RaptorQ processor with default settings
-	processor, err := NewRaptorQProcessor(1000, 10, 500, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
@@ -452,7 +448,7 @@ func TestSysEncodeVeryLargeFile(t *testing.T) {
 	}()
 
 	fileSize := 1024 * 1024 * 1024 // 1GB
-	chunkSize := 50 * 1024 * 1024  // 50MB chunks
+	chunkSize := 50 * 1024 * 1024  // 50MB blocks
 	result := testEncodeDecodeFile(t, processor, fileSize, chunkSize)
 	if !result {
 		t.Fatal("Decoded file does not match original")
@@ -462,7 +458,7 @@ func TestSysEncodeVeryLargeFile(t *testing.T) {
 // System test for decoding with only source symbols (minimum necessary)
 func TestSysDecodeMinimumSymbols(t *testing.T) {
 	// Create RaptorQ processor with default settings
-	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
@@ -487,7 +483,7 @@ func TestSysDecodeMinimumSymbols(t *testing.T) {
 	ctx.DeleteRepairSymbols(t, result)
 
 	// Construct layout file path
-	layoutPath := filepath.Join(ctx.SymbolsDir, "_raptorq_layout.json")
+	layoutPath := result.LayoutFilePath
 	if _, err := os.Stat(layoutPath); os.IsNotExist(err) {
 		// If the layout file was deleted by DeleteRepairSymbols, this test is invalid
 		t.Logf("Layout file %s not found, assuming it was (correctly) deleted by DeleteRepairSymbols. Skipping decode.", layoutPath)
@@ -512,7 +508,7 @@ func TestSysDecodeMinimumSymbols(t *testing.T) {
 // System test for decoding with all symbols (source + repair)
 func TestSysDecodeRedundantSymbols(t *testing.T) {
 	// Create RaptorQ processor with default settings
-	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
@@ -529,7 +525,7 @@ func TestSysDecodeRedundantSymbols(t *testing.T) {
 
 	// Encode the file
 	// Encode the file (err is already declared in this scope)
-	_, err = processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, 0)
+	res, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, 0)
 	if err != nil {
 		t.Fatalf("Failed to encode file: %v", err)
 	}
@@ -537,7 +533,7 @@ func TestSysDecodeRedundantSymbols(t *testing.T) {
 	// Keep all symbols (we're testing with redundancy)
 
 	// Construct layout file path
-	layoutPath := filepath.Join(ctx.SymbolsDir, "_raptorq_layout.json")
+	layoutPath := res.LayoutFilePath
 	if _, err := os.Stat(layoutPath); os.IsNotExist(err) {
 		t.Fatalf("Layout file not found at %s after encoding", layoutPath)
 	}
@@ -557,7 +553,7 @@ func TestSysDecodeRedundantSymbols(t *testing.T) {
 // System test for decoding with a random subset of symbols
 func TestSysDecodeRandomSubset(t *testing.T) {
 	// Create RaptorQ processor with default settings
-	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
@@ -583,7 +579,7 @@ func TestSysDecodeRandomSubset(t *testing.T) {
 	ctx.KeepRandomSubsetOfSymbols(t, result, 0.5)
 
 	// Construct layout file path
-	layoutPath := filepath.Join(ctx.SymbolsDir, "_raptorq_layout.json")
+	layoutPath := result.LayoutFilePath
 	if _, err := os.Stat(layoutPath); os.IsNotExist(err) {
 		t.Fatalf("Layout file not found at %s after encoding/subsetting", layoutPath)
 	}
@@ -603,7 +599,7 @@ func TestSysDecodeRandomSubset(t *testing.T) {
 // System test for error handling during encoding (non-existent input)
 func TestSysErrorHandlingEncode(t *testing.T) {
 	// Create RaptorQ processor with default settings
-	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
@@ -635,7 +631,7 @@ func TestSysErrorHandlingEncode(t *testing.T) {
 // System test for error handling during decoding (non-existent symbols dir)
 func TestSysErrorHandlingDecode(t *testing.T) {
 	// Create RaptorQ processor with default settings
-	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
@@ -672,7 +668,7 @@ func TestGoSpecificFFIInteractions(t *testing.T) {
 	// This test verifies Go string/slice handling with C functions
 
 	// Test creating and freeing a session
-	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
@@ -717,13 +713,13 @@ func TestGoSpecificFFIInteractions(t *testing.T) {
 	}
 
 	// Encode the file (result not needed here, err already declared)
-	_, err = processor.EncodeFile(smallFilePath, ctx.SymbolsDir, 0)
+	res, err := processor.EncodeFile(smallFilePath, ctx.SymbolsDir, 0)
 	if err != nil {
 		t.Fatalf("Failed to encode small file: %v", err)
 	}
 
 	// Verify layout file exists (indirect check that encoding produced metadata)
-	layoutPath := filepath.Join(ctx.SymbolsDir, "_raptorq_layout.json")
+	layoutPath := res.LayoutFilePath
 	if _, err := os.Stat(layoutPath); os.IsNotExist(err) {
 		t.Fatalf("Layout file not found at %s after encoding small file", layoutPath)
 	}
@@ -790,11 +786,11 @@ func setupBenchmarkEnv(b *testing.B, fileSize int) *TestContext {
 // prepareFilesForDecoding encodes a file and returns the path to the layout file.
 // This is used to setup test data before running the decode benchmarks.
 func prepareFilesForDecoding(b *testing.B, processor *RaptorQProcessor, ctx *TestContext, chunkSize int) string {
-	_, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, chunkSize)
+	res, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, chunkSize)
 	if err != nil {
 		b.Fatalf("Failed to encode file for decode benchmark setup: %v", err)
 	}
-	layoutPath := filepath.Join(ctx.SymbolsDir, "_raptorq_layout.json")
+	layoutPath := res.LayoutFilePath
 	if _, err := os.Stat(layoutPath); os.IsNotExist(err) {
 		b.Fatalf("Layout file not found at %s after encoding for benchmark setup", layoutPath)
 	}
@@ -804,7 +800,7 @@ func prepareFilesForDecoding(b *testing.B, processor *RaptorQProcessor, ctx *Tes
 // BenchmarkEncode1MB measures encoding time for a 1MB file
 func BenchmarkEncode1MB(b *testing.B) {
 	// Create RaptorQ processor
-	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		b.Fatalf("Failed to create processor: %v", err)
 	}
@@ -839,7 +835,7 @@ func BenchmarkEncode1MB(b *testing.B) {
 // BenchmarkEncode10MB measures encoding time for a 10MB file
 func BenchmarkEncode10MB(b *testing.B) {
 	// Create RaptorQ processor
-	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		b.Fatalf("Failed to create processor: %v", err)
 	}
@@ -874,7 +870,7 @@ func BenchmarkEncode10MB(b *testing.B) {
 // BenchmarkEncode100MB measures encoding time for a 100MB file
 func BenchmarkEncode100MB(b *testing.B) {
 	// Create RaptorQ processor
-	processor, err := NewRaptorQProcessor(1000, 10, 500, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		b.Fatalf("Failed to create processor: %v", err)
 	}
@@ -914,7 +910,7 @@ func BenchmarkEncode1GB(b *testing.B) {
 	}
 
 	// Create RaptorQ processor with increased memory
-	processor, err := NewRaptorQProcessor(1000, 10, 2048, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		b.Fatalf("Failed to create processor: %v", err)
 	}
@@ -929,7 +925,7 @@ func BenchmarkEncode1GB(b *testing.B) {
 	defer ctx.Cleanup()
 
 	// Use chunking for large file
-	chunkSize := 50 * 1024 * 1024 // 50MB chunks
+	chunkSize := 50 * 1024 * 1024 // 50MB blocks
 
 	// Reset timer before starting the benchmark loop
 	b.ResetTimer()
@@ -952,7 +948,7 @@ func BenchmarkEncode1GB(b *testing.B) {
 // BenchmarkDecode1MB measures decoding time for a 1MB file
 func BenchmarkDecode1MB(b *testing.B) {
 	// Create RaptorQ processor
-	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		b.Fatalf("Failed to create processor: %v", err)
 	}
@@ -989,7 +985,7 @@ func BenchmarkDecode1MB(b *testing.B) {
 // BenchmarkDecode10MB measures decoding time for a 10MB file
 func BenchmarkDecode10MB(b *testing.B) {
 	// Create RaptorQ processor
-	processor, err := NewRaptorQProcessor(1000, 10, 100, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		b.Fatalf("Failed to create processor: %v", err)
 	}
@@ -1026,7 +1022,7 @@ func BenchmarkDecode10MB(b *testing.B) {
 // BenchmarkDecode100MB measures decoding time for a 100MB file
 func BenchmarkDecode100MB(b *testing.B) {
 	// Create RaptorQ processor
-	processor, err := NewRaptorQProcessor(1000, 10, 500, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		b.Fatalf("Failed to create processor: %v", err)
 	}
@@ -1068,7 +1064,7 @@ func BenchmarkDecode1GB(b *testing.B) {
 	}
 
 	// Create RaptorQ processor with increased memory
-	processor, err := NewRaptorQProcessor(1000, 10, 2048, 4)
+	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
 		b.Fatalf("Failed to create processor: %v", err)
 	}
@@ -1083,7 +1079,7 @@ func BenchmarkDecode1GB(b *testing.B) {
 	defer ctx.Cleanup()
 
 	// Use chunking for large file
-	chunkSize := 50 * 1024 * 1024 // 50MB chunks
+	chunkSize := 50 * 1024 * 1024 // 50MB blocks
 
 	// Encode file to generate symbols (outside benchmark loop)
 	layoutPath := prepareFilesForDecoding(b, processor, ctx, chunkSize)
