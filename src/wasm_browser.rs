@@ -69,7 +69,7 @@ mod wasm_browser {
                 let result = if actual_block_size == 0 {
                     processor.encode_file_browser(&input_path, &output_dir).await?
                 } else {
-                    processor.encode_file_in_blocks_browser(&input_path, &output_dir, actual_block_size).await?
+                    processor.encode_file_blocks_browser(&input_path, &output_dir, actual_block_size).await?
                 };
 
                 // Convert result to JS object

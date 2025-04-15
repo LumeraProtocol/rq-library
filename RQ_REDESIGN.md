@@ -26,7 +26,7 @@ This architecture suffered from severe RAM-related issues:
 - **No Throttling**: No limits on simultaneous work or memory usage
 - **OOM Killer Triggered**: Service instability
 
-## 2. New Design: Multi-Target Stream-Based Library with Chunked Metadata
+## 2. New Design: Multi-Target Stream-Based Library with Splitted Metadata
 
 ### 2.1 Architectural Transformation
 
@@ -38,25 +38,24 @@ We replaced the gRPC RQ-Service with a library compiled for multiple targets:
 
 ### 2.2 Key Features and Design Principles
 
-1. **Chunked Stream Processing**: Only process file fragments in memory
+1. **Block Stream Processing**: Only process file fragments in memory
 2. **Built-in Resource Management**: Explicit concurrency/memory caps
 3. **Cross-Platform Support**: Targets include desktop, mobile, WebAssembly
 4. **Flexible FFI**: C ABI for native integration + WASM
 
-## 3. Chunked Metadata File Format
+## 3. Block Metadata File Format
 
-To enable precise decoding of chunked files, the encoder emits a metadata file `_raptorq_layout.json` in the output directory. It contains the encoder parameters and full layout description.
+To enable precise decoding of splitted files, the encoder emits a metadata file `_raptorq_layout.json` in the output directory. It contains the encoder parameters and full layout description.
 
 ### 3.1 Metadata Structure (Rust)
 
 ```rust
 pub struct RaptorQLayout {
-    pub encoder_parameters: Vec<u8>,
     pub blocks: Option<Vec<BlockLayout>>,
-    pub symbols: Option<Vec<String>>,
 }
 
 pub struct BlockLayout {
+    pub encoder_parameters: Vec<u8>,
     pub block_id: String,
     pub original_offset: u64,
     pub size: u64,
@@ -64,26 +63,24 @@ pub struct BlockLayout {
 }
 ```
 
-### 3.2 Example (JSON: Chunked)
+### 3.2 Example multiple blocks (JSON)
 
 ```json
 {
-  "encoder_parameters": [/* 12 bytes */],
   "blocks": [
-    { "block_id": "block_0", "original_offset": 0, "size": 102400, "symbols": ["hash1", "hash2"] },
-    { "block_id": "block_1", "original_offset": 102400, "size": 97600, "symbols": ["hash3", "hash4"] }
+    { "block_id": 0, "encoder_parameters": [/* 12 bytes */], "original_offset": 0, "size": 102400, "symbols": ["hash1", "hash2"], "hash": "block hash" },
+    { "block_id": 1, "encoder_parameters": [/* 12 bytes */],"original_offset": 102400, "size": 97600, "symbols": ["hash3", "hash4"], "hash": "block hash" }
   ],
-  "symbols": null
 }
 ```
 
-### 3.3 Example (JSON: Unchunked)
+### 3.3 Example single  block (JSON:)
 
 ```json
 {
-  "encoder_parameters": [/* 12 bytes */],
-  "blocks": null,
-  "symbols": ["hash1", "hash2", "hash3"]
+  "blocks": [
+    { "block_id": 0, "encoder_parameters": [/* 12 bytes */], "original_offset": 0, "size": 102400, "symbols": ["hash1", "hash2"], "hash": "block hash" },
+  ],
 }
 ```
 
@@ -96,7 +93,7 @@ graph TD
   A[Input File] --> B{Block?}
   B -- No --> C[encode_single_file]
   C --> D[encode_stream]
-  B -- Yes --> E[encode_file_in_blocks]
+  B -- Yes --> E[encode_file_blocks]
   E --> F[encode_stream per block]
   D & F --> G[Collect Symbol IDs + Params]
   G --> H[Create RaptorQLayout Struct]
@@ -108,18 +105,16 @@ graph TD
 ```mermaid
 graph TD
   J[_raptorq_layout.json] --> K[decode_symbols]
-  K --> L{Chunked?}
-  L -- Yes --> M[decode_chunked_file_internal]
-  M --> N[Decode Each Block]
-  L -- No --> O[decode_single_file_internal]
-  M & O --> P[Reconstruct Output File]
+  K --> L[decode_symbols_with_layout]
+  L --> M[Decode Each Block - even if it is only one]
+  M --> N[Reconstruct Output File]
 ```
 
 ## 5. Benefits and Results
 
 ### 5.1 Memory Efficiency
 
-- **Chunked Processing** avoids peak memory usage
+- **Block Processing** avoids peak memory usage
 - **Controlled Concurrency**: Avoids OOM by applying limits
 
 ### 5.2 Simplified Architecture

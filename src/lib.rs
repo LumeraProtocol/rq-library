@@ -101,7 +101,7 @@ pub extern "C" fn raptorq_encode_file(
         None => return -4,
     };
 
-    match processor.encode_file_streamed(input_path_str, output_dir_str, block_size, false) {
+    match processor.encode_file(input_path_str, output_dir_str, block_size, false) {
         Ok(result) => {
             // Serialize result to JSON
             let result_json = match serde_json::to_string(&result) {
@@ -1025,7 +1025,7 @@ mod ffi_tests {
         
         // Tests for raptorq_get_recommended_block_size
         #[test]
-        fn test_ffi_chunk_size_invalid_session() {
+        fn test_ffi_block_size_invalid_session() {
             let invalid_session_id = 99999;
             let file_size = 1024 * 1024; // 1 MB
             
@@ -1035,7 +1035,7 @@ mod ffi_tests {
         }
     
         #[test]
-        fn test_ffi_chunk_size_success() {
+        fn test_ffi_block_size_success() {
             let session_id = init_test_session();
             
             // Test with various file sizes

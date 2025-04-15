@@ -7,14 +7,14 @@
 //! the entire data segment (file or block) to be loaded into memory. There is no support for true
 //! streaming input or output at the encoder/decoder level.
 //!
-//! ## Chunking Strategy
+//! ## Block Strategy
 //!
 //! To handle large files without exceeding memory limits, this module splits input files into fixed-size
 //! blocks. Each block is processed independently using a dedicated RaptorQ encoder instance. The block size
 //! is dynamically determined based on the configured `max_memory_mb`, ensuring bounded peak memory usage.
 //! This approach makes encoding and decoding predictable and scalable for arbitrarily large input files.
 //!
-//! ## Why Manual Chunking Instead of RaptorQ Source Blocks
+//! ## Why Manual Splitting Instead of RaptorQ Source Blocks
 //!
 //! Although RFC 6330 supports partitioning data into multiple "source blocks" for independent encoding,
 //! this functionality is intentionally not used. The main reason is that the `raptorq` crate does not expose
@@ -22,13 +22,13 @@
 //! Since this system stores encoded symbols in a Kademlia-based DHT under content-derived keys,
 //! each symbol must be independently identifiable and retrievable, with known `(block, symbol)` association.
 //!
-//! Manual chunking provides precise control over this mapping by treating each block as an independent unit,
+//! Manual splitting provides precise control over this mapping by treating each block as an independent unit,
 //! each with its own object transmission information (OTI) and set of symbol hashes. This model avoids the need
 //! to reconstruct internal state from opaque symbol data and aligns better with the distributed storage layer.
 //!
 //! ## Limitations
 //!
-//! - Memory usage scales with the block size (or total file size if chunking is disabled).
+//! - Memory usage scales with the block size (or total file size if splitting is disabled).
 //! - Decoding loads each block entirely into memory before reconstructing and writing to disk.
 //! - For more architectural details, see ARCHITECTURE_REVIEW.md.
 
@@ -36,7 +36,7 @@ use raptorq::{Decoder, Encoder, EncodingPacket, ObjectTransmissionInformation};
 use sha3::{Digest, Sha3_256};
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read, Write, BufWriter, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::{Path};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use parking_lot::Mutex;
 use thiserror::Error;
@@ -44,28 +44,22 @@ use serde::{Serialize, Deserialize};
 use log::{error, debug};
 
 const LAYOUT_FILENAME: &str = "_raptorq_layout.json";
+const BLOCK_DIR_PREFIX: &str = "block_";
 
 /// Layout information structure saved to disk during encoding
 /// and read during decoding to facilitate proper file reassembly.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RaptorQLayout {
-    /// The 12-byte encoder parameters needed to initialize the RaptorQ decoder.
-    pub encoder_parameters: Vec<u8>,
-
-    /// Detailed layout for each block. Present only if the file was chunked.
-    /// If None or empty, the file was processed as a single block.
-    pub blocks: Option<Vec<BlockLayout>>,
-
-    /// List of all symbol identifiers (hashes). Present only if the file was *not* chunked.
-    /// If None or empty, refer to the `symbols` list within each `BlockLayout`.
-    pub symbols: Option<Vec<String>>,
+    /// Detailed layout for each block. Will always contain at least one block,
+    /// even if the file was processed as a single block.
+    pub blocks: Vec<BlockLayout>,
 }
 
 /// Information about a single block
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockLayout {
-    /// Identifier for the blocks (e.g., "block_0", "block_1").
-    pub block_id: String,
+    /// Identifier for the block (0, 1, 2, etc.)
+    pub block_id: usize,
 
     /// The 12-byte encoder parameters needed to initialize the RaptorQ decoder.
     pub encoder_parameters: Vec<u8>,
@@ -85,24 +79,24 @@ pub struct BlockLayout {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProcessResult {
-    pub source_symbols: u64,
-    pub repair_symbols: u64,
+    pub total_symbols_count: u64,
+    pub total_repair_symbols: u64,
     pub symbols_directory: String,
-    pub symbols_count: u64,
     pub blocks: Option<Vec<BlockInfo>>,
     pub layout_file_path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlockInfo {
-    pub block_id: String,
+    pub block_id: usize,
     pub encoder_parameters: Vec<u8>,
     pub original_offset: u64,
     pub size: u64,
     pub symbols_count: u64,
+    pub repair_symbols: u64,
     pub hash: String,
 }
-const DEFAULT_SYMBOL_SIZE: u16 = 65535; // 64 KiB
+const DEFAULT_SYMBOL_SIZE: u16 = 65535;  // 64 KiB, this is MAX possible value for now - symbol size is uint16 in RaptorQ
 const DEFAULT_REDUNDANCY_FACTOR: u8 = 4;
 const DEFAULT_STREAM_BUFFER_SIZE: usize = 1 * 1024 * 1024; // 1 MiB
 const DEFAULT_MAX_MEMORY: u64 = 16*1024; // 16 GB
@@ -126,95 +120,10 @@ pub struct ProcessorConfig {
     pub concurrency_limit: u64,
 }
 
-/// Use:
-///  64 KB for files <=  1MB                    No chunking!!!         16 symbols
-/// 128 KB for files >   1MB and <=   5 MB      No chunking!!!       8-40 symbols
-/// 256 KB for files >   5MB and <=  10 MB                          20-40 symbols                
-///   1 MB for files >  10MB and <= 100 MB                         10-100 symbols
-///   2 MB for files > 100MB and <=   1 GB                         50-500 symbols
-///   4 MB for files >   1GB and <=   5 GB                       250-1250 symbols
-///   8 MB for files >   5GB and <=  10 GB                       625-1250 symbols
-///  16 MB for files >  10GB and <= 100 GB                       625-6250 symbols
-///  32 MB for files > 100GB and <=   1 TB                     3125-31250 symbols
 impl Default for ProcessorConfig {
     fn default() -> Self {
         Self {
-            symbol_size: DEFAULT_SYMBOL_SIZE, // 64 KiB
-            redundancy_factor: 4,
-            max_memory_mb: DEFAULT_MAX_MEMORY,
-            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
-        }
-    }
-}
-
-impl ProcessorConfig {
-    pub fn default5_mb() -> Self {
-        Self {
-            symbol_size: 65535, // 64 KiB
-//            symbol_size: 128 * 1024, // 128 KiB
-            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
-            max_memory_mb: DEFAULT_MAX_MEMORY,
-            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
-        }
-    }
-    pub fn default10_mb() -> Self {
-        Self {
-            symbol_size: 65535, // 64 KiB
-  //          symbol_size: 256 * 1024, // 256 KiB
-            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
-            max_memory_mb: DEFAULT_MAX_MEMORY,
-            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
-        }
-    }
-    pub fn default100_mb() -> Self {
-        Self {
-            symbol_size: 65535, // 64 KiB
-    //        symbol_size: 1024 * 1024, // 1 MiB
-            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
-            max_memory_mb: DEFAULT_MAX_MEMORY,
-            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
-        }
-    }
-    pub fn default1_gb() -> Self {
-        Self {
-            symbol_size: 65535, // 64 KiB
-    //        symbol_size: 2 * 1024 * 1024, // 2 MiB
-            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
-            max_memory_mb: DEFAULT_MAX_MEMORY,
-            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
-        }
-    }
-    pub fn default5_gb() -> Self {
-        Self {
-            symbol_size: 65535, // 64 KiB
-//            symbol_size: 4 * 1024 * 1024, // 4 MiB
-            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
-            max_memory_mb: DEFAULT_MAX_MEMORY,
-            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
-        }
-    }
-    pub fn default10_gb() -> Self {
-        Self {
-            symbol_size: 65535, // 64 KiB
-  //          symbol_size: 8 * 1024 * 1024, // 8 MiB
-            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
-            max_memory_mb: DEFAULT_MAX_MEMORY,
-            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
-        }
-    }
-    pub fn default100_gb() -> Self {
-        Self {
-            symbol_size: 65535, // 64 KiB
-    //        symbol_size: 16 * 1024 * 1024, // 16 MiB
-            redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
-            max_memory_mb: DEFAULT_MAX_MEMORY,
-            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
-        }
-    }
-    pub fn default1_tb() -> Self {
-        Self {
-            symbol_size: 65535, // 64 KiB
-//            symbol_size: 32 * 1024 * 1024, // 32 MiB
+            symbol_size: DEFAULT_SYMBOL_SIZE,
             redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
             max_memory_mb: DEFAULT_MAX_MEMORY,
             concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
@@ -283,8 +192,7 @@ impl RaptorQProcessor {
     pub fn get_recommended_block_size(&self, file_size: u64) -> usize {
         let max_memory_bytes = (self.config.max_memory_mb as u64) * 1024 * 1024;
 
-        // If file is smaller than max memory divided by MEMORY_SAFETY_MARGIN,
-        // don't block it
+        // If file is smaller than max memory divided by MEMORY_SAFETY_MARGIN, don't split it
         let safe_memory = (max_memory_bytes as f64 / MEMORY_SAFETY_MARGIN) as u64;
         if file_size < safe_memory {
             return 0;
@@ -299,7 +207,7 @@ impl RaptorQProcessor {
         (blocks * symbol_size) as usize
     }
 
-    pub fn encode_file_streamed(
+    pub fn encode_file(
         &self,
         input_path: &str,
         output_dir: &str,
@@ -322,114 +230,41 @@ impl RaptorQProcessor {
 
         let file_size = input_path.metadata()?.len();
 
-        // If force_single_file is true, bypass all chunking logic and always use encode_single_file
-        if force_single_file {
-            debug!("Processing file without chunking (forced): {:?} ({}B)", input_path, file_size);
-            return self.encode_single_file(input_path, output_dir);
-        }
-
-        // Determine if we need to block the file
-        let actual_block_size = if block_size == 0 {
-            self.get_recommended_block_size(file_size)
-        } else if block_size >= file_size as usize {
-            // If the block size is larger than or equal to the file size, no need to block
-            0
+        // Determine the block size
+        let actual_block_size = if force_single_file {
+            let memory_required = self.estimate_memory_requirements(file_size);
+            if !self.is_memory_available(memory_required) {
+                let err = ProcessError::MemoryLimitExceeded {
+                    required: memory_required,
+                    available: self.config.max_memory_mb,
+                };
+                self.set_last_error(err.to_string());
+                return Err(err);
+            }
+            debug!("Processing file forced to skip splitting: {:?} ({}B)", input_path, file_size);
+            file_size as usize
+        } else if block_size == 0 && self.get_recommended_block_size(file_size) == 0 {
+            // Use file size as block size for single file mode
+            debug!("Processing file without splitting: {:?} ({}B)", input_path, file_size);
+            file_size as usize
+        } else if block_size == 0 {
+            // Auto determine block size
+            let recommended = self.get_recommended_block_size(file_size);
+            debug!("Using recommended block size: {}B", recommended);
+            recommended
         } else {
+            // Use provided block size
+            debug!("Using provided block size: {}B", block_size);
             block_size
         };
 
-        // If we don't need to block, process the whole file
-        if actual_block_size == 0 {
-            debug!("Processing file without chunking: {:?} ({}B)", input_path, file_size);
-            return self.encode_single_file(input_path, output_dir);
-        }
-
-        // Otherwise, process in blocks
-        debug!("Processing file in blocks: {:?} ({}B) with block size {}B",
+        debug!("Processing file: {:?} ({}B) with block size {}B",
                input_path, file_size, actual_block_size);
 
-        self.encode_file_in_blocks(input_path, output_dir, actual_block_size)
+        self.encode_file_blocks(input_path, output_dir, actual_block_size)
     }
 
-    fn encode_single_file(
-        &self,
-        input_path: &Path,
-        output_dir: &str,
-    ) -> Result<ProcessResult, ProcessError> {
-        // Ensure output directory exists
-        let output_path = Path::new(output_dir);
-        fs::create_dir_all(output_path)?;
-
-        let (source_file, total_size) = self.open_and_validate_file(input_path)?;
-        let mut reader = BufReader::new(source_file);
-
-        // Estimate memory requirements - if too high, recommend chunking
-        let memory_required = self.estimate_memory_requirements(total_size);
-        if !self.is_memory_available(memory_required) {
-            let err = ProcessError::MemoryLimitExceeded {
-                required: memory_required,
-                available: self.config.max_memory_mb,
-            };
-            self.set_last_error(err.to_string());
-            return Err(err);
-        }
-
-        // Process the file in a streaming manner
-        let (encoder_params, symbol_ids, _) = self.encode_stream(
-            &mut reader,
-            total_size,
-            output_path,
-        )?;
-
-        // Create layout information to save
-        let layout = RaptorQLayout {
-            encoder_parameters: encoder_params.clone(),
-            blocks: None,
-            symbols: Some(symbol_ids.clone()),
-        };
-
-        // Save layout information to output directory
-        let layout_path = output_path.join(LAYOUT_FILENAME);
-        let layout_json = match serde_json::to_string_pretty(&layout) {
-            Ok(json) => json,
-            Err(e) => {
-                let err = format!("Failed to serialize layout information: {}", e);
-                self.set_last_error(err.clone());
-                return Err(ProcessError::EncodingFailed(err));
-            }
-        };
-
-        let mut layout_file = match File::create(&layout_path) {
-            Ok(file) => file,
-            Err(e) => {
-                let err = format!("Failed to create layout file: {}", e);
-                self.set_last_error(err.clone());
-                return Err(ProcessError::IOError(e));
-            }
-        };
-
-        if let Err(e) = layout_file.write_all(layout_json.as_bytes()) {
-            let err = format!("Failed to write layout file: {}", e);
-            self.set_last_error(err.clone());
-            return Err(ProcessError::IOError(e));
-        }
-
-        debug!("Saved layout file for non-chunked encoding at {:?}", layout_path);
-
-        let source_symbols = symbol_ids.len() as u64 - self.calculate_repair_symbols(total_size);
-        let repair_symbols = self.calculate_repair_symbols(total_size);
-
-        Ok(ProcessResult {
-            source_symbols,
-            repair_symbols,
-            symbols_directory: output_dir.to_string(),
-            symbols_count: symbol_ids.len() as u64,
-            blocks: None,
-            layout_file_path: layout_path.to_string_lossy().to_string(),
-        })
-    }
-
-    fn encode_file_in_blocks(
+    fn encode_file_blocks(
         &self,
         input_path: &Path,
         output_dir: &str,
@@ -440,25 +275,34 @@ impl RaptorQProcessor {
         fs::create_dir_all(base_output_path)?;
 
         let (source_file, total_size) = self.open_and_validate_file(input_path)?;
-        let mut reader = BufReader::new(source_file);
-
+        
         // Calculate number of blocks
-        let block_count = (total_size as f64 / block_size as f64).ceil() as usize;
+        let block_count = if block_size >= total_size as usize {
+            1
+        } else {
+            (total_size as f64 / block_size as f64).ceil() as usize
+        };
+        
+        let mut reader = BufReader::new(source_file);
+        
         debug!("File will be split into {} blocks", block_count);
 
         // Process each block
         let mut blocks = Vec::with_capacity(block_count);
         let mut block_layouts = Vec::with_capacity(block_count);
         let mut total_symbols_count = 0;
+        let mut total_repair_symbols = 0;
 
         for block_index in 0..block_count {
-            let block_id = format!("block_{}", block_index);
-            let block_dir = base_output_path.join(&block_id);
+            let block_id = block_index; // Now using usize instead of String
+            let block_dir = base_output_path.join(format!("block_{}", block_index));
             fs::create_dir_all(&block_dir)?;
 
             let actual_offset = block_index as u64 * block_size as u64;
             let remaining = total_size - actual_offset;
             let actual_block_size = std::cmp::min(block_size as u64, remaining);
+            let repair_symbols = self.calculate_repair_symbols(actual_block_size);
+            total_repair_symbols += repair_symbols;
 
             debug!("Processing block {} of {} bytes at offset {}",
                    block_index, actual_block_size, actual_offset);
@@ -470,18 +314,18 @@ impl RaptorQProcessor {
             let (params, symbol_ids, hash) = self.encode_stream(
                 &mut block_reader,
                 actual_block_size,
+                repair_symbols,
                 &block_dir,
             )?;
 
-            let _source_symbols = symbol_ids.len() as u64 - self.calculate_repair_symbols(actual_block_size);
-
             // Add to BlockInfo for ProcessResult
             blocks.push(BlockInfo {
-                block_id: block_id.clone(),
+                block_id,
                 encoder_parameters: params.clone(),
                 original_offset: actual_offset,
                 size: actual_block_size,
                 symbols_count: symbol_ids.len() as u64,
+                repair_symbols,
                 hash: hash.clone(),
             });
 
@@ -503,9 +347,7 @@ impl RaptorQProcessor {
 
         // Create layout information to save
         let layout = RaptorQLayout {
-            encoder_parameters: Vec::new(),
-            blocks: Some(block_layouts),
-            symbols: None,
+            blocks: block_layouts,
         };
 
         // Save layout information to output directory
@@ -534,18 +376,12 @@ impl RaptorQProcessor {
             return Err(ProcessError::IOError(e));
         }
 
-        debug!("Saved layout file for chunked encoding at {:?}", layout_path);
-
-        // Calculate overall symbols
-        let source_symbols = total_symbols_count -
-            blocks.iter().map(|c| self.calculate_repair_symbols(c.size)).sum::<u64>();
-        let repair_symbols = total_symbols_count - source_symbols;
+        debug!("Saved layout file for at {:?}", layout_path);
 
         Ok(ProcessResult {
-            source_symbols,
-            repair_symbols,
+            total_symbols_count,
+            total_repair_symbols,
             symbols_directory: output_dir.to_string(),
-            symbols_count: total_symbols_count,
             blocks: Some(blocks),
             layout_file_path: layout_path.to_string_lossy().to_string(),
         })
@@ -555,6 +391,7 @@ impl RaptorQProcessor {
         &self,
         reader: &mut R,
         data_size: u64,
+        repair_symbols: u64,
         output_path: &Path,
     ) -> Result<(Vec<u8>, Vec<String>, String), ProcessError> {
         // Calculate buffer size - aim for processing in 16 pieces or DEFAULT_STREAM_BUFFER_SIZE,
@@ -571,9 +408,6 @@ impl RaptorQProcessor {
             data_size,
             self.config.symbol_size,
         );
-
-        // Calculate repair symbols
-        let repair_symbols = self.calculate_repair_symbols(data_size);
 
         // We'll accumulate the data and then encode
         let mut data = Vec::with_capacity(data_size as usize);
@@ -641,12 +475,7 @@ impl RaptorQProcessor {
         output_path: &str,
         layout_path: &str,
     ) -> Result<(), ProcessError> {
-        // Check if we can take another task
-        if !self.can_start_task() {
-            return Err(ProcessError::ConcurrencyLimitReached);
-        }
-
-        let _guard = TaskGuard::new(&self.active_tasks);
+        // Check if we can take another task and guard as done in the decode_symbols_with_layout
 
         // Load and parse layout file
         let layout_path = Path::new(layout_path);
@@ -699,6 +528,12 @@ impl RaptorQProcessor {
         output_path: &str,
         layout: &RaptorQLayout,
     ) -> Result<(), ProcessError> {
+        // Check if we can take another task
+        if !self.can_start_task() {
+            return Err(ProcessError::ConcurrencyLimitReached);
+        }
+        let _guard = TaskGuard::new(&self.active_tasks);
+
         let symbols_dir = Path::new(symbols_dir);
         if !symbols_dir.exists() {
             let err = format!("Symbols directory not found: {:?}", symbols_dir);
@@ -706,204 +541,79 @@ impl RaptorQProcessor {
             return Err(ProcessError::FileNotFound(err));
         }
 
-        // Verify we have valid encoder parameters in the layout
-        if layout.encoder_parameters.len() < 12 {
-            let err = "Invalid encoder parameters in layout (less than 12 bytes)".to_string();
+        if layout.blocks.is_empty() {
+            let err = "Layout file has empty blocks array".to_string();
             self.set_last_error(err.clone());
             return Err(ProcessError::DecodingFailed(err));
         }
 
-        // Extract encoder parameters from layout
-        let mut encoder_params = [0u8; 12];
-        encoder_params.copy_from_slice(&layout.encoder_parameters[0..12]);
-
-        // Check if this is a chunked file
-        let mut blocks = Vec::new();
+        // Check for block directories
+        let mut block_paths = Vec::new();
         for entry in fs::read_dir(symbols_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_dir() && path.file_name().unwrap().to_string_lossy().starts_with("block_") {
-                blocks.push(path);
+            if path.is_dir() && path.file_name().unwrap().to_string_lossy().starts_with(BLOCK_DIR_PREFIX) {
+                block_paths.push(path);
             }
         }
 
-        // Determine if we have a chunked file and use the appropriate decoding method
-        if blocks.is_empty() {
-            // No blocks, decode as a single file
-            self.decode_single_file_internal(symbols_dir, output_path, &encoder_params, layout.symbols.as_ref())
-        } else {
-            // Decode each block and combine if we have block layouts
-            if let Some(block_layouts) = &layout.blocks {
-                if !block_layouts.is_empty() {
-                    debug!("Using layout with {} block layouts for decoding", block_layouts.len());
-                    self.decode_chunked_file_with_layout(&blocks, output_path, layout)
-                } else {
-                    // Layout exists but has empty blocks array
-                    debug!("Layout file exists but has empty blocks array, using basic chunked decoding");
-                    self.decode_chunked_file_internal(&blocks, output_path, &encoder_params)
-                }
-            } else {
-                // Layout exists but has no blocks field
-                debug!("Layout file exists but has no blocks field, using basic chunked decoding");
-                self.decode_chunked_file_internal(&blocks, output_path, &encoder_params)
+        if block_paths.is_empty() {
+            //Handle case where no block directories are found - will try to read ALL symbols from symbols_dir
+            //set block path to the symbols_dir for all blocks
+            for _ in &layout.blocks {
+                block_paths.push(symbols_dir.to_path_buf());
             }
         }
-    }
 
-    /// Internal function to decode a single (non-chunked) file
-    fn decode_single_file_internal(
-        &self,
-        symbols_dir: &Path,
-        output_path: &str,
-        encoder_params: &[u8; 12],
-        symbol_ids: Option<&Vec<String>>,
-    ) -> Result<(), ProcessError> {
-        debug!("Decoding single file from {:?} to {:?}", symbols_dir, output_path);
-
-        // Create decoder with the provided parameters
-        let config = ObjectTransmissionInformation::deserialize(encoder_params);
-        let decoder = Decoder::new(config);
-
-        // Read symbol files, prioritizing the provided symbol_ids if available
-        let symbol_files = if let Some(ids) = symbol_ids {
-            // Read specific symbols listed in layout
-            self.read_specific_symbol_files(symbols_dir, ids)?
-        } else {
-            // Fall back to reading all symbol files in directory
-            self.read_symbol_files(symbols_dir)?
-        };
-
-        let output_file = BufWriter::new(File::create(output_path)?);
-
-        // Decode symbols
-        self.decode_symbols_to_file(decoder, symbol_files, output_file)
-    }
-
-    /// Internal function to decode a chunked file without detailed layout information
-    fn decode_chunked_file_internal(
-        &self,
-        blocks: &[PathBuf],
-        output_path: &str,
-        encoder_params: &[u8; 12],
-    ) -> Result<(), ProcessError> {
-        debug!("Decoding chunked file with {} blocks to {:?}", blocks.len(), output_path);
-
+        // Single unified decoding approach
         let mut output_file = BufWriter::new(File::create(output_path)?);
 
+        // Process multiple blocks
+        debug!("Decoding file with {} blocks", layout.blocks.len());
+        
         // Sort blocks by their index
-        let mut sorted_blocks = blocks.to_vec();
-        sorted_blocks.sort_by(|a, b| {
+        block_paths.sort_by(|a, b| {
             let a_index = a.file_name().unwrap().to_string_lossy()
-                .strip_prefix("block_").unwrap().parse::<usize>().unwrap();
+                .strip_prefix(BLOCK_DIR_PREFIX).unwrap().parse::<usize>().unwrap();
             let b_index = b.file_name().unwrap().to_string_lossy()
-                .strip_prefix("block_").unwrap().parse::<usize>().unwrap();
+                .strip_prefix(BLOCK_DIR_PREFIX).unwrap().parse::<usize>().unwrap();
             a_index.cmp(&b_index)
         });
 
-        // Extract and store block indices for later size calculation
-        let block_indices: Vec<usize> = sorted_blocks.iter().map(|path| {
-            path.file_name().unwrap().to_string_lossy()
-                .strip_prefix("block_").unwrap().parse::<usize>().unwrap()
-        }).collect();
-
         // Process each block
-        for (i, block_path) in sorted_blocks.iter().enumerate() {
-            debug!("Decoding block {:?}", block_path);
-
-            // Create decoder with the provided parameters
-            let config = ObjectTransmissionInformation::deserialize(encoder_params);
-            let decoder = Decoder::new(config);
-
-            // Read symbol files for this block
-            let symbol_files = self.read_symbol_files(block_path)?;
-
-            // Decode this block directly to the output file
-            let mut block_data = Vec::new();
-            self.decode_symbols_to_memory(decoder, symbol_files, &mut block_data)?;
+        for block_path in &block_paths {
+            // Get block_index from path
+            let block_index = block_path.file_name().unwrap().to_string_lossy()
+                .strip_prefix(BLOCK_DIR_PREFIX).unwrap().parse::<usize>().unwrap();
             
-            // Calculate block size based on the pattern used in the test
-            // This should match how the blocks were created during encoding
-            let block_idx = block_indices[i];
-            let expected_block_size = 1000 + (block_idx * 100);
-            
-            // Only use the expected block size bytes from the decoded data
-            // This handles the case where the RaptorQ decoder is recreating the entire file
-            if block_data.len() > expected_block_size {
-                debug!("Trimming block {} from {} bytes to {} bytes",
-                       block_idx, block_data.len(), expected_block_size);
-                output_file.write_all(&block_data[0..expected_block_size])?;
-            } else {
-                output_file.write_all(&block_data)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn decode_chunked_file_with_layout(
-        &self,
-        blocks: &[PathBuf],
-        output_path: &str,
-        layout: &RaptorQLayout,
-    ) -> Result<(), ProcessError> {
-        debug!("Decoding chunked file with layout information to {:?}", output_path);
-
-        let mut output_file = BufWriter::new(File::create(output_path)?);
-
-        // Sort blocks by their index
-        let mut sorted_blocks = blocks.to_vec();
-        sorted_blocks.sort_by(|a, b| {
-            let a_index = a.file_name().unwrap().to_string_lossy()
-                .strip_prefix("block_").unwrap().parse::<usize>().unwrap();
-            let b_index = b.file_name().unwrap().to_string_lossy()
-                .strip_prefix("block_").unwrap().parse::<usize>().unwrap();
-            a_index.cmp(&b_index)
-        });
-
-        // Extract encoder parameters from layout
-        let mut encoder_params = [0u8; 12];
-        if layout.encoder_parameters.len() >= 12 {
-            encoder_params.copy_from_slice(&layout.encoder_parameters[0..12]);
-        } else {
-            let err = "Invalid encoder parameters in layout file".to_string();
-            self.set_last_error(err.clone());
-            return Err(ProcessError::DecodingFailed(err));
-        }
-
-        // Access block layouts (they should exist based on earlier check)
-        let block_layouts = match &layout.blocks {
-            Some(layouts) => layouts,
-            None => {
-                let err = "No block layouts found in layout file".to_string();
-                self.set_last_error(err.clone());
-                return Err(ProcessError::DecodingFailed(err));
-            }
-        };
-
-        // Process each block
-        for block_path in &sorted_blocks {
-            // Get block_id from path
-            let block_id = block_path.file_name().unwrap().to_string_lossy().to_string();
-            debug!("Decoding block {} with layout information", block_id);
-
             // Find the corresponding block layout
-            let block_layout = match block_layouts.iter().find(|cl| cl.block_id == block_id) {
-                Some(cl) => cl,
+            let block_layout = match layout.blocks.iter().find(|bl| bl.block_id == block_index) {
+                Some(bl) => bl,
                 None => {
-                    let err = format!("No layout information found for block {}", block_id);
+                    let err = format!("No layout information found for block {}", block_index);
                     self.set_last_error(err.clone());
                     return Err(ProcessError::DecodingFailed(err));
                 }
             };
 
-            // Create decoder
-            let config = ObjectTransmissionInformation::deserialize(&encoder_params);
-            let mut decoder = Decoder::new(config);
-
+            // Extract encoder parameters for this specific block
+            if block_layout.encoder_parameters.len() < 12 {
+                let err = format!("Invalid encoder parameters in block {}", block_index);
+                self.set_last_error(err.clone());
+                return Err(ProcessError::DecodingFailed(err));
+            }
+            
+            let mut block_encoder_params = [0u8; 12];
+            block_encoder_params.copy_from_slice(&block_layout.encoder_parameters[0..12]);
+            
             // Decode block data
             let mut block_data = Vec::with_capacity(block_layout.size as usize);
             
-            // If layout contains symbol list, use it; otherwise fall back to reading all files
+            // Create decoder with the parameters specific to this block
+            let config = ObjectTransmissionInformation::deserialize(&block_encoder_params);
+            let mut decoder = Decoder::new(config);
+            
+            // Use symbol list from layout if available
             if !block_layout.symbols.is_empty() {
                 for symbol_id in &block_layout.symbols {
                     let symbol_path = block_path.join(symbol_id);
@@ -943,120 +653,98 @@ impl RaptorQProcessor {
                 let computed_hash = get_hash_as_b58(&block_data);
                 if computed_hash != block_layout.hash {
                     let err = format!("Hash mismatch for block {}: expected {}, got {}",
-                                      block_id, block_layout.hash, computed_hash);
+                                    block_layout.block_id, block_layout.hash, computed_hash);
                     self.set_last_error(err.clone());
                     return Err(ProcessError::DecodingFailed(err));
                 }
             }
 
-            // Use the actual block size from the layout
-            let bytes_to_write = block_layout.size as usize;
-            
             // Seek to the correct position in the output file based on block's original offset
             output_file.seek(SeekFrom::Start(block_layout.original_offset))?;
-            
-            if block_data.len() > bytes_to_write {
-                debug!("Trimming block {} from {} bytes to correct size of {} bytes",
-                       block_id, block_data.len(), bytes_to_write);
-                output_file.write_all(&block_data[0..bytes_to_write])?;
-            } else if block_data.len() < bytes_to_write {
-                debug!("Warning: Decoded data for block {} is {} bytes, expected {} bytes",
-                       block_id, block_data.len(), bytes_to_write);
-                output_file.write_all(&block_data)?;
-                
-                // Pad with zeros if necessary to reach the expected size
-                let padding_needed = bytes_to_write - block_data.len();
-                if padding_needed > 0 {
-                    debug!("Padding block with {} zeros to reach expected size", padding_needed);
-                    let zeros = vec![0u8; padding_needed];
-                    output_file.write_all(&zeros)?;
-                }
-            } else {
-                output_file.write_all(&block_data)?;
-            }
+            output_file.write_all(&block_data)?;
         }
 
         Ok(())
     }
+
 /// Read all symbol files from a directory
-fn read_symbol_files(&self, dir: &Path) -> Result<Vec<Vec<u8>>, ProcessError> {
-    let mut symbol_files = Vec::new();
+    fn read_symbol_files(&self, dir: &Path) -> Result<Vec<Vec<u8>>, ProcessError> {
+        let mut symbol_files = Vec::new();
 
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
 
-        if path.is_file() && path.file_name().unwrap_or_default() != LAYOUT_FILENAME {
-            // Read symbol file
-            let mut symbol_data = Vec::new();
-            let mut file = File::open(&path)?;
-            file.read_to_end(&mut symbol_data)?;
+            if path.is_file() && path.file_name().unwrap_or_default() != LAYOUT_FILENAME {
+                // Read symbol file
+                let mut symbol_data = Vec::new();
+                let mut file = File::open(&path)?;
+                file.read_to_end(&mut symbol_data)?;
 
-            symbol_files.push(symbol_data);
-        }
-    }
-
-    if symbol_files.is_empty() {
-        let err = format!("No symbol files found in {:?}", dir);
-        self.set_last_error(err.clone());
-        return Err(ProcessError::DecodingFailed(err));
-    }
-
-    Ok(symbol_files)
-}
-
-/// Read specific symbol files by ID from a directory
-fn read_specific_symbol_files(&self, dir: &Path, symbol_ids: &[String]) -> Result<Vec<Vec<u8>>, ProcessError> {
-    let mut symbol_files = Vec::new();
-
-    for symbol_id in symbol_ids {
-        let symbol_path = dir.join(symbol_id);
-        if !symbol_path.exists() {
-            debug!("Symbol file not found: {:?}, skipping", symbol_path);
-            continue;
-        }
-
-        let mut symbol_data = Vec::new();
-        match File::open(&symbol_path) {
-            Ok(mut file) => {
-                if let Err(e) = file.read_to_end(&mut symbol_data) {
-                    debug!("Failed to read symbol file {:?}: {}", symbol_path, e);
-                    continue;
-                }
-            },
-            Err(e) => {
-                debug!("Failed to open symbol file {:?}: {}", symbol_path, e);
-                continue;
+                symbol_files.push(symbol_data);
             }
         }
 
-        symbol_files.push(symbol_data);
+        if symbol_files.is_empty() {
+            let err = format!("No symbol files found in {:?}", dir);
+            self.set_last_error(err.clone());
+            return Err(ProcessError::DecodingFailed(err));
+        }
+
+        Ok(symbol_files)
     }
 
-    if symbol_files.is_empty() {
-        let err = format!("No valid symbol files found from the provided IDs in {:?}", dir);
-        self.set_last_error(err.clone());
-        return Err(ProcessError::DecodingFailed(err));
-    }
+    /// Read specific symbol files by ID from a directory
+    #[allow(dead_code)]
+    fn read_specific_symbol_files(&self, dir: &Path, symbol_ids: &[String]) -> Result<Vec<Vec<u8>>, ProcessError> {
+        let mut symbol_files = Vec::new();
 
-    Ok(symbol_files)
+        for symbol_id in symbol_ids {
+            let symbol_path = dir.join(symbol_id);
+            if !symbol_path.exists() {
+                debug!("Symbol file not found: {:?}, skipping", symbol_path);
+                continue;
+            }
+
+            let mut symbol_data = Vec::new();
+            match File::open(&symbol_path) {
+                Ok(mut file) => {
+                    if let Err(e) = file.read_to_end(&mut symbol_data) {
+                        debug!("Failed to read symbol file {:?}: {}", symbol_path, e);
+                        continue;
+                    }
+                },
+                Err(e) => {
+                    debug!("Failed to open symbol file {:?}: {}", symbol_path, e);
+                    continue;
+                }
+            }
+
+            symbol_files.push(symbol_data);
+        }
+
+        if symbol_files.is_empty() {
+            let err = format!("No valid symbol files found from the provided IDs in {:?}", dir);
+            self.set_last_error(err.clone());
+            return Err(ProcessError::DecodingFailed(err));
+        }
+
+        Ok(symbol_files)
     }
 
     // Helper function to safely attempt decoding a packet without panicking
     fn safe_decode(&self, decoder: &mut Decoder, packet: EncodingPacket) -> Option<Vec<u8>> {
         // Use catch_unwind to prevent panics from propagating
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             decoder.decode(packet)
-        })) {
-            Ok(result) => result,
-            Err(_) => {
-                // Log corrupted symbol and return None
-                debug!("Skipping corrupted symbol: panic during decoding");
-                None
-            }
-        }
+        })).unwrap_or_else(|_| {
+            // Log corrupted symbol and return None
+            debug!("Skipping corrupted symbol: panic during decoding");
+            None
+        })
     }
 
+    #[allow(dead_code)]
     fn decode_symbols_to_file<W: Write>(
         &self,
         mut decoder: Decoder,
@@ -1331,10 +1019,10 @@ mod tests {
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
         let file_size = 10 * 1024 * 1024; // 10 MB file
         
-        // With default config (max_memory_mb = 1024), a 10 MB file should not need chunking
+        // With default config (max_memory_mb = 1024), a 10 MB file should not need splitting
         let block_size = processor.get_recommended_block_size(file_size);
         
-        assert_eq!(block_size, 0); // 0 means no chunking needed
+        assert_eq!(block_size, 0); // 0 means no splitting needed
     }
 
     #[test]
@@ -1342,7 +1030,7 @@ mod tests {
         let config = ProcessorConfig {
             symbol_size: DEFAULT_SYMBOL_SIZE,
             redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
-            max_memory_mb: 100, // Deliberately small to force chunking
+            max_memory_mb: 100, // Deliberately small to force splitting
             concurrency_limit: 4,
         };
         let processor = RaptorQProcessor::new(config);
@@ -1414,18 +1102,18 @@ mod tests {
                 println!("  Processor with {} MB memory: block size = {} bytes",
                          configs[i].max_memory_mb, block_size);
 
-                // For small files compared to memory, chunking might not be needed
+                // For small files compared to memory, splitting might not be needed
                 // Convert max_memory_mb to same type as file_size for comparison
                 if file_size < (configs[i].max_memory_mb as u64) * 1024 * 1024 / 4 {
                     assert_eq!(block_size, 0,
-                               "File size of {} bytes should not need chunking with {} MB memory",
+                               "File size of {} bytes should not need splitting with {} MB memory",
                                file_size, configs[i].max_memory_mb);
                 }
 
-                // For large files compared to memory, chunking is required
+                // For large files compared to memory, splitting is required
                 if file_size > (configs[i].max_memory_mb as u64) * 1024 * 1024 {
                     assert!(block_size > 0,
-                            "File size of {} bytes should need chunking with {} MB memory",
+                            "File size of {} bytes should need splitting with {} MB memory",
                             file_size, configs[i].max_memory_mb);
                 }
 
@@ -1433,16 +1121,16 @@ mod tests {
                 if i < block_sizes.len() - 1 {
                     let next_block_size = block_sizes[i + 1];
 
-                    // If both need chunking, more memory should allow larger blocks
+                    // If both need splitting, more memory should allow larger blocks
                     if block_size > 0 && next_block_size > 0 {
                         assert!(next_block_size >= block_size,
                                 "Processor with more memory should allow larger blocks");
                     }
 
-                    // If current doesn't need chunking, next shouldn't either
+                    // If current doesn't need splitting, next shouldn't either
                     if block_size == 0 {
                         assert_eq!(next_block_size, 0,
-                                   "If a processor with less memory doesn't need chunking, a processor with more memory shouldn't either");
+                                   "If a processor with less memory doesn't need splitting, a processor with more memory shouldn't either");
                     }
                 }
             }
@@ -1456,15 +1144,15 @@ mod tests {
         
         let block_size = processor.get_recommended_block_size(file_size);
         
-        assert_eq!(block_size, 0); // 0 means no chunking needed
+        assert_eq!(block_size, 0); // 0 means no splitting needed
     }
 
-    // Tests for RaptorQProcessor::encode_file_streamed
+    // Tests for RaptorQProcessor::encode_file
 
     #[test]
     fn test_encode_file_not_found() {
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let result = processor.encode_file_streamed("non_existent_file.txt", "output_dir", 0, false);
+        let result = processor.encode_file("non_existent_file.txt", "output_dir", 0, false);
         
         assert!(matches!(result, Err(ProcessError::FileNotFound(_))));
     }
@@ -1479,7 +1167,7 @@ mod tests {
         File::create(&input_path).expect("Failed to create empty file");
         
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let result = processor.encode_file_streamed(
+        let result = processor.encode_file(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
             0,
@@ -1493,7 +1181,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_success_no_chunking() {
+    fn test_encode_success_no_splitting() {
         let (temp_dir, dir_path) = create_temp_dir();
         let input_path = dir_path.join("small_file.bin");
         let output_dir = dir_path.join("output");
@@ -1502,17 +1190,17 @@ mod tests {
         create_test_file(&input_path, 100 * 1024).expect("Failed to create test file");
         
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let result = processor.encode_file_streamed(
+        let result = processor.encode_file(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
-            0, // 0 means auto-determine if chunking is needed
+            0, // 0 means auto-determine if splitting is needed
             false
         );
         
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.blocks.is_none());
-        assert!(result.symbols_count > 0);
+        assert!(result.total_symbols_count > 0);
         
         // Verify output directory exists and contains symbol files
         assert!(output_dir.exists());
@@ -1523,7 +1211,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_success_manual_no_chunking() {
+    fn test_encode_success_manual_no_splitting() {
         let (temp_dir, dir_path) = create_temp_dir();
         let input_path = dir_path.join("small_file.bin");
         let output_dir = dir_path.join("output");
@@ -1532,7 +1220,7 @@ mod tests {
         create_test_file(&input_path, 100 * 1024).expect("Failed to create test file");
         
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let result = processor.encode_file_streamed(
+        let result = processor.encode_file(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
             500 * 1024, // Larger than file size
@@ -1542,7 +1230,7 @@ mod tests {
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.blocks.is_none());
-        assert!(result.symbols_count > 0);
+        assert!(result.total_symbols_count > 0);
         
         // Verify output directory exists and contains symbol files
         assert!(output_dir.exists());
@@ -1553,7 +1241,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_success_auto_chunking() {
+    fn test_encode_success_auto_splitting() {
         let (temp_dir, dir_path) = create_temp_dir();
         let input_path = dir_path.join("large_file.bin");
         let output_dir = dir_path.join("output");
@@ -1564,15 +1252,15 @@ mod tests {
         let config = ProcessorConfig {
             symbol_size: DEFAULT_SYMBOL_SIZE,
             redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
-            max_memory_mb: 1, // Very small memory limit to force chunking
+            max_memory_mb: 1, // Very small memory limit to force splitting
             concurrency_limit: 4,
         };
         
         let processor = RaptorQProcessor::new(config);
-        let result = processor.encode_file_streamed(
+        let result = processor.encode_file(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
-            0, // Auto chunking
+            0, // Auto splitting
             false
         );
         
@@ -1585,14 +1273,14 @@ mod tests {
         assert!(output_dir.exists());
         assert!(fs::read_dir(&output_dir).unwrap()
             .any(|entry| entry.unwrap().path().file_name().unwrap()
-                .to_string_lossy().starts_with("block_")));
+                .to_string_lossy().starts_with(BLOCK_DIR_PREFIX)));
         
         // Ensure temp_dir isn't dropped early
         drop(temp_dir);
     }
 
     #[test]
-    fn test_encode_success_manual_chunking() {
+    fn test_encode_success_manual_splitting() {
         let (temp_dir, dir_path) = create_temp_dir();
         let input_path = dir_path.join("large_file.bin");
         let output_dir = dir_path.join("output");
@@ -1603,7 +1291,7 @@ mod tests {
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
         let block_size = 1 * 1024 * 1024; // 1 MB blocks
         
-        let result = processor.encode_file_streamed(
+        let result = processor.encode_file(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
             block_size,
@@ -1634,7 +1322,7 @@ mod tests {
         assert!(!output_dir.exists());
         
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let result = processor.encode_file_streamed(
+        let result = processor.encode_file(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
             0,
@@ -1667,7 +1355,7 @@ mod tests {
         };
         
         let processor = RaptorQProcessor::new(config);
-        let result = processor.encode_file_streamed(
+        let result = processor.encode_file(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
             0, // block_size = 0
@@ -1708,7 +1396,7 @@ mod tests {
         processor.active_tasks.fetch_add(1, Ordering::SeqCst);
         
         // Attempt to start another task
-        let result = processor.encode_file_streamed(
+        let result = processor.encode_file(
             &input_path_str,
             &output_dir_str,
             0,
@@ -1736,7 +1424,7 @@ mod tests {
         create_test_file(&input_path, file_size).expect("Failed to create test file");
         
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let result = processor.encode_file_streamed(
+        let result = processor.encode_file(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
             0,
@@ -1747,12 +1435,10 @@ mod tests {
         let result = result.unwrap();
         
         // Verify result fields
-        assert!(result.source_symbols > 0);
-        assert!(result.repair_symbols > 0);
+        assert!(result.total_symbols_count > 0);
+        assert!(result.total_repair_symbols > 0);
         assert_eq!(result.symbols_directory, output_dir.to_str().unwrap());
-        assert!(result.symbols_count > 0);
-        assert_eq!(result.source_symbols + result.repair_symbols, result.symbols_count);
-        // assert!(!result.encoder_parameters.is_empty());
+        assert!(result.total_symbols_count > 0);
 
         // Ensure temp_dir isn't dropped early
         drop(temp_dir);
@@ -1768,7 +1454,7 @@ mod tests {
         create_test_file(&input_path, 200 * 1024).expect("Failed to create test file");
         
         let processor = RaptorQProcessor::new(ProcessorConfig::default());
-        let result = processor.encode_file_streamed(
+        let result = processor.encode_file(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
             0,
@@ -1786,7 +1472,7 @@ mod tests {
             .collect();
         
         assert!(!symbol_files.is_empty());
-        assert_eq!(symbol_files.len(), result.symbols_count as usize);
+        assert_eq!(symbol_files.len(), result.total_symbols_count as usize);
         
         // Ensure temp_dir isn't dropped early
         drop(temp_dir);
@@ -1818,11 +1504,21 @@ mod tests {
 
         // create fake layout file
         let config = ObjectTransmissionInformation::with_defaults(1024, 128);
+        let encoder_params = config.serialize().to_vec();
         let packets = vec![vec![0; 128]; 10];
+        
+        // Create a single BlockLayout for the entire file
+        let block_layout = BlockLayout {
+            block_id: 0,
+            encoder_parameters: encoder_params,
+            original_offset: 0,
+            size: 1024,
+            symbols: packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect(),
+            hash: "dummy_hash".to_string(),
+        };
+        
         let layout = RaptorQLayout {
-            encoder_parameters: config.serialize().to_vec(),
-            blocks: None,
-            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+            blocks: vec![block_layout],
         };
         //write layout file
         let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
@@ -1865,10 +1561,19 @@ mod tests {
         
         // Create layout file
         let layout_path = symbols_dir.join(LAYOUT_FILENAME);
-        let layout = RaptorQLayout {
+        
+        // Create a single BlockLayout for the entire file
+        let block_layout = BlockLayout {
+            block_id: 0,
             encoder_parameters: encoder_params.to_vec(),
-            blocks: None,
-            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+            original_offset: 0,
+            size: original_data.len() as u64,
+            symbols: packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect(),
+            hash: get_hash_as_b58(&original_data),
+        };
+        
+        let layout = RaptorQLayout {
+            blocks: vec![block_layout],
         };
         
         let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
@@ -1893,7 +1598,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_success_chunked_file() {
+    fn test_decode_success_multi_block_file() {
         let (temp_dir, dir_path) = create_temp_dir();
         let symbols_dir = dir_path.join("symbols");
         let output_path = dir_path.join("output.bin");
@@ -1930,9 +1635,8 @@ mod tests {
             create_symbol_files(&block_dir, &packets).expect("Failed to create symbol files");
 
             // Create layout file with block information
-            let block_id = format!("block_{}", i);
             let block_layout = BlockLayout {
-                block_id,
+                block_id: i,
                 encoder_parameters: params,
                 original_offset: (i * block_size) as u64,
                 size: block_size as u64,
@@ -1941,11 +1645,8 @@ mod tests {
             };
             block_layouts.push(block_layout);
         }
-        
         let layout = RaptorQLayout {
-            encoder_parameters: Vec::new(),
-            blocks: Some(block_layouts),
-            symbols: None,
+            blocks: block_layouts,
         };
         
         // Save layout file
@@ -2001,10 +1702,19 @@ mod tests {
         
         // Create and save layout file
         let layout_path = symbols_dir.join(LAYOUT_FILENAME);
-        let layout = RaptorQLayout {
+        
+        // Create a single BlockLayout for the entire file
+        let block_layout = BlockLayout {
+            block_id: 0,
             encoder_parameters: encoder_params.to_vec(),
-            blocks: None,
-            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+            original_offset: 0,
+            size: original_data.len() as u64,
+            symbols: packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect(),
+            hash: get_hash_as_b58(&original_data),
+        };
+        
+        let layout = RaptorQLayout {
+            blocks: vec![block_layout],
         };
         
         let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
@@ -2066,10 +1776,18 @@ mod tests {
         
         // Create and save layout file
         let layout_path = symbols_dir.join(LAYOUT_FILENAME);
-        let layout = RaptorQLayout {
+        // Create a single BlockLayout for the entire file
+        let block_layout = BlockLayout {
+            block_id: 0,
             encoder_parameters: encoder_params.to_vec(),
-            blocks: None,
-            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+            original_offset: 0,
+            size: original_data.len() as u64,
+            symbols: packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect(),
+            hash: get_hash_as_b58(&original_data),
+        };
+        
+        let layout = RaptorQLayout {
+            blocks: vec![block_layout],
         };
         
         let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
@@ -2121,10 +1839,19 @@ mod tests {
         
         // Create layout file with invalid parameters
         let layout_path = symbols_dir.join(LAYOUT_FILENAME);
-        let layout = RaptorQLayout {
+        
+        // Create a single BlockLayout with invalid parameters
+        let block_layout = BlockLayout {
+            block_id: 0,
             encoder_parameters: invalid_params.to_vec(),
-            blocks: None,
-            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+            original_offset: 0,
+            size: original_data.len() as u64,
+            symbols: packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect(),
+            hash: get_hash_as_b58(&original_data),
+        };
+        
+        let layout = RaptorQLayout {
+            blocks: vec![block_layout],
         };
         
         let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
@@ -2175,10 +1902,19 @@ mod tests {
         
         // Create layout file
         let layout_path = symbols_dir.join(LAYOUT_FILENAME);
-        let layout = RaptorQLayout {
+        
+        // Create a single BlockLayout for the entire file
+        let block_layout = BlockLayout {
+            block_id: 0,
             encoder_parameters: encoder_params.to_vec(),
-            blocks: None,
-            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+            original_offset: 0,
+            size: original_data.len() as u64,
+            symbols: packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect(),
+            hash: get_hash_as_b58(&original_data),
+        };
+        
+        let layout = RaptorQLayout {
+            blocks: vec![block_layout],
         };
         
         let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
@@ -2225,10 +1961,19 @@ mod tests {
         
         // Create layout file
         let layout_path = symbols_dir.join(LAYOUT_FILENAME);
-        let layout = RaptorQLayout {
+        
+        // Create a single BlockLayout for the entire file
+        let block_layout = BlockLayout {
+            block_id: 0,
             encoder_parameters: encoder_params.to_vec(),
-            blocks: None,
-            symbols: Some(packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect()),
+            original_offset: 0,
+            size: original_data.len() as u64,
+            symbols: packets.iter().enumerate().map(|(i, _)| format!("symbol_{}.bin", i)).collect(),
+            hash: get_hash_as_b58(&original_data),
+        };
+        
+        let layout = RaptorQLayout {
+            blocks: vec![block_layout],
         };
         
         let layout_json = serde_json::to_string_pretty(&layout).expect("Failed to serialize layout");
@@ -2438,7 +2183,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_chunked_sorting() {
+    fn test_decode_multi_block_sorting() {
         let (temp_dir, dir_path) = create_temp_dir();
         let symbols_dir = dir_path.join("symbols");
         let output_path = dir_path.join("output.bin");
@@ -2465,7 +2210,7 @@ mod tests {
             fs::create_dir(&block_dir).expect("Failed to create block directory");
             
             let block_data = generate_test_data(1000 + i * 100);
-            let chunk_hash = get_hash_as_b58(&block_data);
+            let block_hash = get_hash_as_b58(&block_data);
 
             // Encode block
             let (params, packets) = encode_test_data(
@@ -2485,12 +2230,12 @@ mod tests {
             }
             
             let block_layout = BlockLayout {
-                block_id: format!("block_{}", i),
+                block_id: i as usize,
                 encoder_parameters: params,
                 original_offset: offset,
                 size: (1000 + i * 100) as u64,
                 symbols: (0..packets.len()).map(|j| format!("symbol_{}.bin", j)).collect(),
-                hash: chunk_hash,
+                hash: block_hash,
             };
 
             block_layouts_map.insert(i as i32, block_layout);
@@ -2503,9 +2248,7 @@ mod tests {
         }
 
         let layout = RaptorQLayout {
-            encoder_parameters: Vec::new(),
-            blocks: Some(block_layouts),
-            symbols: None,
+            blocks: block_layouts,
         };
         
         // Save layout file

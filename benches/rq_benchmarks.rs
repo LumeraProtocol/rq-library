@@ -51,7 +51,7 @@ fn setup_test_env(size: usize) -> (TempDir, PathBuf, PathBuf) {
 // Helper function to encode a file and return encoder parameters
 fn encode_file_for_decoding(processor: &RaptorQProcessor, input_path: &Path, output_dir: &Path) -> String {
     let result = processor
-        .encode_file_streamed(
+        .encode_file(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
             0, // Let the processor determine block size
@@ -92,7 +92,7 @@ fn bench_encode_1mb(group: &mut BenchmarkGroup<WallTime>) {
         b.iter(|| {
             let info = allocation_counter::measure(|| {
                 processor
-                    .encode_file_streamed(
+                    .encode_file(
                         input_file.to_str().unwrap(),
                         output_dir.to_str().unwrap(),
                         0, // Let the processor determine block size
@@ -121,7 +121,7 @@ fn bench_encode_1mb(group: &mut BenchmarkGroup<WallTime>) {
 
 // Benchmark encoding a 10MB file
 fn bench_encode_10mb(group: &mut BenchmarkGroup<WallTime>) {
-    let config = ProcessorConfig::default10_mb();
+    let config = ProcessorConfig::default();
     let processor = RaptorQProcessor::new(config);
     
     let mut max_allocations = 0;
@@ -137,7 +137,7 @@ fn bench_encode_10mb(group: &mut BenchmarkGroup<WallTime>) {
         b.iter(|| {
             let info = allocation_counter::measure(|| {
                 processor
-                    .encode_file_streamed(
+                    .encode_file(
                         input_file.to_str().unwrap(),
                         output_dir.to_str().unwrap(),
                         0, // Let the processor determine block size
@@ -166,7 +166,7 @@ fn bench_encode_10mb(group: &mut BenchmarkGroup<WallTime>) {
 
 // Benchmark encoding a 100MB file
 fn bench_encode_100mb(group: &mut BenchmarkGroup<WallTime>) {
-    let config = ProcessorConfig::default100_mb();
+    let config = ProcessorConfig::default();
     let processor = RaptorQProcessor::new(config);
     
     let mut max_allocations = 0;
@@ -182,7 +182,7 @@ fn bench_encode_100mb(group: &mut BenchmarkGroup<WallTime>) {
         b.iter(|| {
             let info = allocation_counter::measure(|| {
                 processor
-                    .encode_file_streamed(
+                    .encode_file(
                         input_file.to_str().unwrap(),
                         output_dir.to_str().unwrap(),
                         0, // Let the processor determine block size
@@ -211,7 +211,7 @@ fn bench_encode_100mb(group: &mut BenchmarkGroup<WallTime>) {
 
 // Benchmark encoding a 1GB file
 fn bench_encode_1gb(group: &mut BenchmarkGroup<WallTime>) {
-    let config = ProcessorConfig::default1_gb();
+    let config = ProcessorConfig::default();
     let processor = RaptorQProcessor::new(config);
     
     let mut max_allocations = 0;
@@ -227,7 +227,7 @@ fn bench_encode_1gb(group: &mut BenchmarkGroup<WallTime>) {
         b.iter(|| {
             let info = allocation_counter::measure(|| {
                 processor
-                    .encode_file_streamed(
+                    .encode_file(
                         input_file.to_str().unwrap(),
                         output_dir.to_str().unwrap(),
                         0, // Let the processor determine block size
@@ -302,7 +302,7 @@ fn bench_decode_1mb(group: &mut BenchmarkGroup<WallTime>) {
 
 // Benchmark decoding a 10MB file
 fn bench_decode_10mb(group: &mut BenchmarkGroup<WallTime>) {
-    let config = ProcessorConfig::default10_mb();
+    let config = ProcessorConfig::default();
     let processor = RaptorQProcessor::new(config);
     
     let mut max_allocations = 0;
@@ -349,7 +349,7 @@ fn bench_decode_10mb(group: &mut BenchmarkGroup<WallTime>) {
 
 // Benchmark decoding a 100MB file
 fn bench_decode_100mb(group: &mut BenchmarkGroup<WallTime>) {
-    let config = ProcessorConfig::default100_mb();
+    let config = ProcessorConfig::default();
     let processor = RaptorQProcessor::new(config);
     
     let mut max_allocations = 0;
@@ -396,7 +396,7 @@ fn bench_decode_100mb(group: &mut BenchmarkGroup<WallTime>) {
 
 // Benchmark decoding a 1GB file
 fn bench_decode_1gb(group: &mut BenchmarkGroup<WallTime>) {
-    let config = ProcessorConfig::default1_gb();
+    let config = ProcessorConfig::default();
     let processor = RaptorQProcessor::new(config);
     
     let mut max_allocations = 0;

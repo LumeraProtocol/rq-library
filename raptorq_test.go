@@ -388,9 +388,9 @@ func TestSysEncodeMediumFile(t *testing.T) {
 	}
 }
 
-// System test for encoding/decoding a large file with auto-chunking (100MB)
+// System test for encoding/decoding a large file with auto-splitting (100MB)
 func TestSysEncodeLargeFileAutoChunk(t *testing.T) {
-	// Create RaptorQ processor with small memory limit to force auto-chunking
+	// Create RaptorQ processor with small memory limit to force auto-splitting
 	processor, err := NewRaptorQProcessor(DefaultSymbolSize, DefaultRedundancyFactor, MaxMemoryMB_4GB, DefaultConcurrencyLimit)
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
@@ -408,7 +408,7 @@ func TestSysEncodeLargeFileAutoChunk(t *testing.T) {
 	}
 }
 
-// System test for encoding/decoding a large file with manual chunking (100MB)
+// System test for encoding/decoding a large file with manual splitting (100MB)
 func TestSysEncodeLargeFileManualChunk(t *testing.T) {
 	// Create RaptorQ processor with default settings
 	processor, err := NewDefaultRaptorQProcessor()
@@ -924,7 +924,7 @@ func BenchmarkEncode1GB(b *testing.B) {
 	ctx := setupBenchmarkEnv(b, SIZE_1GB)
 	defer ctx.Cleanup()
 
-	// Use chunking for large file
+	// Use splitting for large file
 	blockSize := 50 * 1024 * 1024 // 50MB blocks
 
 	// Reset timer before starting the benchmark loop
@@ -1078,7 +1078,7 @@ func BenchmarkDecode1GB(b *testing.B) {
 	ctx := setupBenchmarkEnv(b, SIZE_1GB)
 	defer ctx.Cleanup()
 
-	// Use chunking for large file
+	// Use splitting for large file
 	blockSize := 50 * 1024 * 1024 // 50MB blocks
 
 	// Encode file to generate symbols (outside benchmark loop)

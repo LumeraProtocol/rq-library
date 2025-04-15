@@ -8,7 +8,7 @@ RaptorQProcessor
 ├── get_last_error()
 ├── get_config()
 ├── get_recommended_block_size()
-├── encode_file_streamed()
+├── encode_file()
 ├── decode_symbols()
 ├── decode_symbols_with_layout()
 └── decode_symbols_with_params()
@@ -17,48 +17,31 @@ RaptorQProcessor
 ## Encoding Flow
 
 ```
-encode_file_streamed()
+encode_file()
 ├── can_start_task()
 ├── TaskGuard::new()
 ├── set_last_error() [if error]
 ├── get_recommended_block_size() [when block_size is 0]
+│── estimate_memory_requirements() [when force_single_file]
 │
-├── encode_single_file() [if no chunking]
-│   ├── create_dir_all()
-│   ├── open_and_validate_file()
-│   ├── estimate_memory_requirements()
-│   ├── is_memory_available()
-│   ├── set_last_error() [if memory error]
-│   │
-│   ├── encode_stream()
-│   │   ├── calculate_repair_symbols()
-│   │   ├── Encoder::new()
-│   │   ├── Encoder::get_encoded_packets()
-│   │   └── calculate_symbol_id() [for each packet]
-│   │
-│   ├── serde_json::to_string_pretty() [for layout]
-│   ├── set_last_error() [if serialization error]
-│   ├── write_all() [write layout file]
-│   ├── set_last_error() [if write error]
-│   ├── calculate_repair_symbols()
-│   └── return ProcessResult
-│
-└── encode_file_in_blocks() [if chunking]
+└── encode_file_blocks()
     ├── create_dir_all()
     ├── open_and_validate_file()
-    ├── create_dir_all() [for each block]
     │
-    ├── encode_stream() [for each block]
-    │   ├── calculate_repair_symbols()
-    │   ├── Encoder::new()
-    │   ├── Encoder::get_encoded_packets()
-    │   └── calculate_symbol_id() [for each packet]
+    ├── [For each block]
+    │   │
+    │   ├── create_dir_all() [for each block]
+    │   ├── calculate_repair_symbols() [for each block]
+    │   │
+    │   ├── encode_stream() [for each block]
+    │   │   ├── Encoder::new()
+    │   │   ├── Encoder::get_encoded_packets()
+    │   │   └── calculate_symbol_id() [for each packet]
     │
     ├── serde_json::to_string_pretty() [for layout]
     ├── set_last_error() [if serialization error]
     ├── write_all() [write layout file]
     ├── set_last_error() [if write error]
-    ├── calculate_repair_symbols()
     └── return ProcessResult
 ```
 
@@ -66,63 +49,35 @@ encode_file_streamed()
 
 ```
 decode_symbols()
-├── can_start_task()
-├── TaskGuard::new()
 ├── set_last_error() [if error]
 ├── read_to_string() [read layout file]
 ├── serde_json::from_str() [parse layout]
 └── decode_symbols_with_layout()
+    ├── can_start_task()
+    ├── TaskGuard::new()
     │
-    ├── decode_single_file_internal() [if not chunked]
+    ├── sort blocks
+    │
+    ├── [For each block]
     │   ├── ObjectTransmissionInformation::deserialize()
     │   ├── Decoder::new()
     │   │
-    │   ├── read_specific_symbol_files() [if symbol_ids provided]
-    │   │   └── read_to_end() [for each file]
+    │   ├── [For each symbol in block layout]
+    │   │   ├── read_to_end()
+    │   │   ├── EncodingPacket::deserialize()
+    │   │   └── safe_decode()
+    │   │       └── decoder.decode() [wrapped in catch_unwind]
     │   │
-    │   ├── read_symbol_files() [otherwise]
-    │   │   └── read_to_end() [for each file]
+    │   ├── [Or fall back to all files]
+    │   │   ├── read_symbol_files()
+    │   │   └── decode_symbols_to_memory()
+    │   │       ├── EncodingPacket::deserialize() [for each]
+    │   │       └── safe_decode() [for each]
     │   │
-    │   └── decode_symbols_to_file()
-    │       ├── EncodingPacket::deserialize() [for each symbol]
-    │       ├── safe_decode() [for each packet]
-    │       │   └── decoder.decode() [wrapped in catch_unwind]
-    │       └── write_all() [write decoded data]
+    │   ├── seek() [to correct position]
+    │   └── write_all() [write decoded block data]
     │
-    ├── decode_chunked_file_with_layout() [if chunked with layout]
-    │   ├── sort blocks
-    │   │
-    │   ├── [For each block]
-    │   │   ├── ObjectTransmissionInformation::deserialize()
-    │   │   ├── Decoder::new()
-    │   │   │
-    │   │   ├── [For each symbol in block layout]
-    │   │   │   ├── read_to_end()
-    │   │   │   ├── EncodingPacket::deserialize()
-    │   │   │   └── safe_decode()
-    │   │   │       └── decoder.decode() [wrapped in catch_unwind]
-    │   │   │
-    │   │   ├── [Or fall back to all files]
-    │   │   │   ├── read_symbol_files()
-    │   │   │   └── decode_symbols_to_memory()
-    │   │   │       ├── EncodingPacket::deserialize() [for each]
-    │   │   │       └── safe_decode() [for each]
-    │   │   │
-    │   │   ├── seek() [to correct position]
-    │   │   └── write_all() [write decoded block data]
-    │
-    └── decode_chunked_file_internal() [if chunked without detailed layout]
-        ├── sort blocks
-        │
-        ├── [For each block]
-        │   ├── ObjectTransmissionInformation::deserialize()
-        │   ├── Decoder::new()
-        │   ├── read_symbol_files()
-        │   └── decode_symbols_to_memory()
-        │       ├── EncodingPacket::deserialize() [for each]
-        │       ├── safe_decode() [for each]
-        │       │   └── decoder.decode() [wrapped in catch_unwind]
-        │       └── write_all() [write block data]
+    └── return Ok
 ```
 
 ## Helper Functions

@@ -1,7 +1,7 @@
 //! System tests for RaptorQ library
 //!
 //! These tests verify the end-to-end functionality of encoding and decoding
-//! files of various sizes, including chunking scenarios, using the library
+//! files of various sizes, including splitting scenarios, using the library
 //! directly from Rust.
 
 use rand::{Rng, SeedableRng};
@@ -121,13 +121,15 @@ impl TestContext {
     /// (leaving only source symbols)
     fn delete_repair_symbols(&self, result: &ProcessResult) -> std::io::Result<()> {
         if let Some(blocks) = &result.blocks {
-            // For chunked encoding
+            // For multi-block encoding
             for block in blocks {
-                let block_dir = self.symbols_dir.join(&block.block_id);
+                // Format the block_id (now a usize) to create the directory name
+                let block_dir_name = format!("block_{}", block.block_id);
+                let block_dir = self.symbols_dir.join(&block_dir_name);
                 let entries = fs::read_dir(&block_dir)?;
                 
                 // Keep only source symbols (based on count)
-                let source_symbols = block.symbols_count - result.repair_symbols;
+                let source_symbols = block.symbols_count - block.repair_symbols;
                 let mut files: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
                 
                 // Sort files to ensure deterministic behavior
@@ -138,22 +140,7 @@ impl TestContext {
                     fs::remove_file(entry.path())?;
                 }
             }
-        } else {
-            // For non-chunked encoding
-            let entries = fs::read_dir(&self.symbols_dir)?;
-            let mut files: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
-            
-            // Sort files to ensure deterministic behavior
-            files.sort_by_key(|entry| entry.file_name());
-            
-            // Delete repair symbols (keep only source_symbols count)
-            for entry in files.iter().skip(result.source_symbols as usize) {
-                if entry.file_name() != "_raptorq_layout.json" {
-                    fs::remove_file(entry.path())?;
-                }
-            }
         }
-        
         Ok(())
     }
     
@@ -168,11 +155,13 @@ impl TestContext {
         if let Some(blocks) = &result.blocks {
             // For chunked encoding
             for block in blocks {
-                let block_dir = self.symbols_dir.join(&block.block_id);
+                // Format the block_id (now a usize) as a string to create the directory name
+                let block_dir_name = format!("block_{}", block.block_id);
+                let block_dir = self.symbols_dir.join(block_dir_name);
                 let entries = fs::read_dir(&block_dir)?;
                 // Collect file entries and their paths
                 let files: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
-                let source_symbols = (block.symbols_count - result.repair_symbols) as usize;
+                let source_symbols = (block.symbols_count - block.repair_symbols) as usize;
                 
                 // Keep paths instead of DirEntry objects
                 let mut to_keep_paths = Vec::new();
@@ -198,34 +187,6 @@ impl TestContext {
                     }
                 }
             }
-        } else {
-            // For non-chunked encoding
-            let entries = fs::read_dir(&self.symbols_dir)?;
-            let files: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
-            
-            let source_symbols = result.source_symbols as usize;
-            
-            // Create a set of paths to keep
-            let mut keep_paths = HashSet::new();
-            
-            // Always keep source symbols
-            for i in 0..std::cmp::min(source_symbols, files.len()) {
-                keep_paths.insert(files[i].path());
-            }
-            
-            // Add random repair symbols
-            for i in source_symbols..files.len() {
-                if rng.gen_bool(percentage) {
-                    keep_paths.insert(files[i].path());
-                }
-            }
-            
-            // Delete files not in the keep set
-            for entry in &files {
-                if !keep_paths.contains(&entry.path()) {
-                    fs::remove_file(entry.path())?;
-                }
-            }
         }
         
         Ok(())
@@ -242,7 +203,7 @@ fn test_encode_decode(
     let ctx = TestContext::new(file_size_bytes)?;
     
     // Encode the file
-    let _ = processor.encode_file_streamed(
+    let _ = processor.encode_file(
         &ctx.input_path(),
         &ctx.symbols_path(),
         block_size,
@@ -289,14 +250,14 @@ fn test_sys_encode_decode_medium_file() {
     assert!(result, "Decoded file does not match original");
 }
 
-/// System test for encoding/decoding a large file with auto-chunking (100MB)
+/// System test for encoding/decoding a large file with auto-splitting (100MB)
 #[test]
 fn test_sys_encode_decode_large_file_auto_chunk() {
-    // Use smaller memory limit to force auto-chunking
+    // Use smaller memory limit to force auto-splitting
     let config = ProcessorConfig {
         symbol_size: 50_000,
         redundancy_factor: 12,
-        max_memory_mb: 10, // Small memory limit to force chunking
+        max_memory_mb: 10, // Small memory limit to force splitting
         concurrency_limit: 4,
     };
     
@@ -309,7 +270,7 @@ fn test_sys_encode_decode_large_file_auto_chunk() {
     assert!(result, "Decoded file does not match original");
 }
 
-/// System test for encoding/decoding a large file with manual chunking (100MB)
+/// System test for encoding/decoding a large file with manual splitting (100MB)
 #[test]
 fn test_sys_encode_decode_large_file_manual_chunk() {
     let processor = RaptorQProcessor::new(ProcessorConfig::default());
@@ -346,7 +307,7 @@ fn test_sys_decode_minimum_symbols() {
     let ctx = TestContext::new(file_size).expect("Failed to create test context");
     
     // Encode the file
-    let result = processor.encode_file_streamed(
+    let result = processor.encode_file(
         &ctx.input_path(),
         &ctx.symbols_path(),
         0,
@@ -381,7 +342,7 @@ fn test_sys_decode_redundant_symbols() {
     let ctx = TestContext::new(file_size).expect("Failed to create test context");
     
     // Encode the file
-    let _ = processor.encode_file_streamed(
+    let _ = processor.encode_file(
         &ctx.input_path(),
         &ctx.symbols_path(),
         0,
@@ -415,7 +376,7 @@ fn test_sys_decode_random_subset() {
     let ctx = TestContext::new(file_size).expect("Failed to create test context");
     
     // Encode the file
-    let result = processor.encode_file_streamed(
+    let result = processor.encode_file(
         &ctx.input_path(),
         &ctx.symbols_path(),
         0,
@@ -452,7 +413,7 @@ fn test_sys_error_handling_encode() {
     // Try to encode a non-existent file
     let non_existent_file = ctx.temp_dir.path().join("does_not_exist.bin");
     
-    let result = processor.encode_file_streamed(
+    let result = processor.encode_file(
         &non_existent_file.to_string_lossy(),
         &ctx.symbols_path(),
         0,
