@@ -93,7 +93,7 @@ pub struct BlockInfo {
     pub original_offset: u64,
     pub size: u64,
     pub symbols_count: u64,
-    pub repair_symbols: u64,
+    pub source_symbols_count: u64,
     pub hash: String,
 }
 const DEFAULT_SYMBOL_SIZE: u16 = 65535;  // 64 KiB, this is MAX possible value for now - symbol size is uint16 in RaptorQ
@@ -325,7 +325,7 @@ impl RaptorQProcessor {
                 original_offset: actual_offset,
                 size: actual_block_size,
                 symbols_count: symbol_ids.len() as u64,
-                repair_symbols,
+                source_symbols_count: symbol_ids.len() as u64 - repair_symbols,
                 hash: hash.clone(),
             });
 
@@ -547,58 +547,33 @@ impl RaptorQProcessor {
             return Err(ProcessError::DecodingFailed(err));
         }
 
-        // Check for block directories
-        let mut block_paths = Vec::new();
-        for entry in fs::read_dir(symbols_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() && path.file_name().unwrap().to_string_lossy().starts_with(BLOCK_DIR_PREFIX) {
-                block_paths.push(path);
-            }
-        }
-
-        if block_paths.is_empty() {
-            //Handle case where no block directories are found - will try to read ALL symbols from symbols_dir
-            //set block path to the symbols_dir for all blocks
-            for _ in &layout.blocks {
-                block_paths.push(symbols_dir.to_path_buf());
-            }
-        }
-
         // Single unified decoding approach
         let mut output_file = BufWriter::new(File::create(output_path)?);
 
         // Process multiple blocks
         debug!("Decoding file with {} blocks", layout.blocks.len());
         
-        // Sort blocks by their index
-        block_paths.sort_by(|a, b| {
-            let a_index = a.file_name().unwrap().to_string_lossy()
-                .strip_prefix(BLOCK_DIR_PREFIX).unwrap().parse::<usize>().unwrap();
-            let b_index = b.file_name().unwrap().to_string_lossy()
-                .strip_prefix(BLOCK_DIR_PREFIX).unwrap().parse::<usize>().unwrap();
-            a_index.cmp(&b_index)
-        });
-
-        // Process each block
-        for block_path in &block_paths {
-            // Get block_index from path
-            let block_index = block_path.file_name().unwrap().to_string_lossy()
-                .strip_prefix(BLOCK_DIR_PREFIX).unwrap().parse::<usize>().unwrap();
+        // Sort blocks by their block_id to ensure deterministic processing order
+        let mut sorted_blocks = layout.blocks.clone();
+        sorted_blocks.sort_by(|a, b| a.block_id.cmp(&b.block_id));
+        
+        // Iterate over blocks from the layout file (source of truth)
+        for block_layout in &sorted_blocks {
+            // Determine the block directory path
+            let block_dir_name = format!("{}{}", BLOCK_DIR_PREFIX, block_layout.block_id);
+            let block_dir_path = symbols_dir.join(block_dir_name);
             
-            // Find the corresponding block layout
-            let block_layout = match layout.blocks.iter().find(|bl| bl.block_id == block_index) {
-                Some(bl) => bl,
-                None => {
-                    let err = format!("No layout information found for block {}", block_index);
-                    self.set_last_error(err.clone());
-                    return Err(ProcessError::DecodingFailed(err));
-                }
+            // Use block directory if it exists, otherwise use symbols_dir
+            let block_path = if block_dir_path.exists() && block_dir_path.is_dir() {
+                block_dir_path
+            } else {
+                // Fall back to using the main symbols directory
+                symbols_dir.to_path_buf()
             };
 
             // Extract encoder parameters for this specific block
             if block_layout.encoder_parameters.len() < 12 {
-                let err = format!("Invalid encoder parameters in block {}", block_index);
+                let err = format!("Invalid encoder parameters in block {}", block_layout.block_id);
                 self.set_last_error(err.clone());
                 return Err(ProcessError::DecodingFailed(err));
             }
@@ -613,39 +588,48 @@ impl RaptorQProcessor {
             let config = ObjectTransmissionInformation::deserialize(&block_encoder_params);
             let mut decoder = Decoder::new(config);
             
-            // Use symbol list from layout if available
-            if !block_layout.symbols.is_empty() {
-                for symbol_id in &block_layout.symbols {
-                    let symbol_path = block_path.join(symbol_id);
-                    if !symbol_path.exists() {
-                        debug!("Symbol {} not found, skipping", symbol_id);
-                        continue;
-                    }
-
-                    let mut symbol_data = Vec::new();
-                    let mut file = match File::open(&symbol_path) {
-                        Ok(f) => f,
-                        Err(e) => {
-                            debug!("Failed to open symbol file {}: {}", symbol_id, e);
-                            continue;
-                        }
-                    };
-
-                    if let Err(e) = file.read_to_end(&mut symbol_data) {
-                        debug!("Failed to read symbol file {}: {}", symbol_id, e);
-                        continue;
-                    }
-
-                    let packet = EncodingPacket::deserialize(&symbol_data);
-                    if let Some(result) = self.safe_decode(&mut decoder, packet) {
-                        block_data.extend_from_slice(&result);
-                        break; // Successfully decoded
-                    }
+            // Skip blocks that have no symbols in the layout
+            if block_layout.symbols.is_empty() {
+                debug!("No symbols in layout for block {}, skipping", block_layout.block_id);
+                continue;
+            }
+            
+            // Process symbols from the layout file
+            let mut found_any = false;
+            for symbol_id in &block_layout.symbols {
+                let symbol_path = block_path.join(symbol_id);
+                if !symbol_path.exists() {
+                    debug!("Symbol {} not found in {:?}, skipping", symbol_id, block_path);
+                    continue;
                 }
-            } else {
-                // Fall back to reading all files in the block directory
-                let symbol_files = self.read_symbol_files(block_path)?;
-                self.decode_symbols_to_memory(decoder, symbol_files, &mut block_data)?;
+
+                found_any = true;
+                let mut symbol_data = Vec::new();
+                let mut file = match File::open(&symbol_path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        debug!("Failed to open symbol file {}: {}", symbol_id, e);
+                        continue;
+                    }
+                };
+
+                if let Err(e) = file.read_to_end(&mut symbol_data) {
+                    debug!("Failed to read symbol file {}: {}", symbol_id, e);
+                    continue;
+                }
+
+                let packet = EncodingPacket::deserialize(&symbol_data);
+                if let Some(result) = self.safe_decode(&mut decoder, packet) {
+                    block_data.extend_from_slice(&result);
+                    break; // Successfully decoded
+                }
+            }
+            
+            // If we couldn't find any of the specified symbols
+            if !found_any {
+                let err = format!("None of the symbols for block {} could be found", block_layout.block_id);
+                self.set_last_error(err.clone());
+                return Err(ProcessError::DecodingFailed(err));
             }
 
             // Validate hash if available
@@ -653,7 +637,7 @@ impl RaptorQProcessor {
                 let computed_hash = get_hash_as_b58(&block_data);
                 if computed_hash != block_layout.hash {
                     let err = format!("Hash mismatch for block {}: expected {}, got {}",
-                                    block_layout.block_id, block_layout.hash, computed_hash);
+                                     block_layout.block_id, block_layout.hash, computed_hash);
                     self.set_last_error(err.clone());
                     return Err(ProcessError::DecodingFailed(err));
                 }
@@ -667,7 +651,8 @@ impl RaptorQProcessor {
         Ok(())
     }
 
-/// Read all symbol files from a directory
+    /// Read all symbol files from a directory
+    #[allow(dead_code)]
     fn read_symbol_files(&self, dir: &Path) -> Result<Vec<Vec<u8>>, ProcessError> {
         let mut symbol_files = Vec::new();
 
@@ -773,6 +758,7 @@ impl RaptorQProcessor {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn decode_symbols_to_memory(
         &self,
         mut decoder: Decoder,
@@ -1199,8 +1185,11 @@ mod tests {
         
         assert!(result.is_ok());
         let result = result.unwrap();
-        assert!(result.blocks.is_none());
-        assert!(result.total_symbols_count > 0);
+        let blocks = result.blocks.unwrap();
+        assert_eq!(blocks.len(), 1);
+        let block = &blocks[0];
+        assert_eq!(result.total_symbols_count, block.symbols_count as u64);
+        assert_eq!(result.total_repair_symbols, (block.symbols_count - block.source_symbols_count) as u64);
         
         // Verify output directory exists and contains symbol files
         assert!(output_dir.exists());
@@ -1226,12 +1215,15 @@ mod tests {
             500 * 1024, // Larger than file size
             false
         );
-        
+
         assert!(result.is_ok());
         let result = result.unwrap();
-        assert!(result.blocks.is_none());
-        assert!(result.total_symbols_count > 0);
-        
+        let blocks = result.blocks.unwrap();
+        assert_eq!(blocks.len(), 1);
+        let block = &blocks[0];
+        assert_eq!(result.total_symbols_count, block.symbols_count as u64);
+        assert_eq!(result.total_repair_symbols, (block.symbols_count - block.source_symbols_count) as u64);
+
         // Verify output directory exists and contains symbol files
         assert!(output_dir.exists());
         assert!(fs::read_dir(&output_dir).unwrap().count() > 0);
@@ -1449,6 +1441,7 @@ mod tests {
         let (temp_dir, dir_path) = create_temp_dir();
         let input_path = dir_path.join("file.bin");
         let output_dir = dir_path.join("output");
+        let block_dir = output_dir.join("block_0");
         
         // Create a test file (200 KB)
         create_test_file(&input_path, 200 * 1024).expect("Failed to create test file");
@@ -1465,7 +1458,7 @@ mod tests {
         let result = result.unwrap();
         
         // Check that symbol files are created in the output directory
-        let symbol_files: Vec<_> = fs::read_dir(&output_dir)
+        let symbol_files: Vec<_> = fs::read_dir(&block_dir)
             .expect("Failed to read output dir")
             .filter_map(Result::ok)
             .filter(|entry| entry.file_name() != LAYOUT_FILENAME) // Exclude layout file from count

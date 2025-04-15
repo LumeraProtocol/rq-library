@@ -73,45 +73,11 @@ func (ctx *TestContext) VerifyFilesMatch(t *testing.T) bool {
 
 // DeleteRepairSymbols removes repair symbols, keeping only source symbols
 func (ctx *TestContext) DeleteRepairSymbols(t *testing.T, result *ProcessResult) {
-	if len(result.Blocks) > 0 {
-		// For chunked encoding
-		for _, block := range result.Blocks {
-			blockDir := filepath.Join(ctx.SymbolsDir, block.BlockID)
-			entries, err := os.ReadDir(blockDir)
-			if err != nil {
-				t.Fatalf("Failed to read block directory: %v", err)
-			}
-
-			// Sort and keep only source symbols
-			fileNames := make([]string, 0, len(entries))
-			for _, entry := range entries {
-				fileNames = append(fileNames, entry.Name())
-			}
-			// Sort filenames for deterministic behavior
-			fileNames = sortStrings(fileNames)
-
-			// Delete repair symbols (keep only source symbols count)
-			// Calculate source symbols count based on total symbols and repair symbols
-			// Note: This assumes RepairSymbols is consistent across blocks, which might not always be true.
-			// A more robust approach would involve parsing the layout file if needed.
-			sourceSymbols := int(block.SymbolsCount) - int(result.RepairSymbols) // Assuming RepairSymbols is per-block or consistent
-			for i := sourceSymbols; i < len(fileNames); i++ {
-				filePath := filepath.Join(blockDir, fileNames[i])
-				// Avoid deleting the layout file if it happens to be sorted here
-				if filepath.Base(filePath) == "_raptorq_layout.json" {
-					continue
-				}
-				err := os.Remove(filePath)
-				if err != nil {
-					t.Fatalf("Failed to delete repair symbol: %v", err)
-				}
-			}
-		}
-	} else {
-		// For non-chunked encoding
-		entries, err := os.ReadDir(ctx.SymbolsDir)
+	for _, block := range result.Blocks {
+		blockDir := filepath.Join(ctx.SymbolsDir, fmt.Sprintf("block_%d", block.BlockID))
+		entries, err := os.ReadDir(blockDir)
 		if err != nil {
-			t.Fatalf("Failed to read symbols directory: %v", err)
+			t.Fatalf("Failed to read block directory: %v", err)
 		}
 
 		// Sort and keep only source symbols
@@ -122,20 +88,17 @@ func (ctx *TestContext) DeleteRepairSymbols(t *testing.T, result *ProcessResult)
 		// Sort filenames for deterministic behavior
 		fileNames = sortStrings(fileNames)
 
-		// Delete repair symbols (keep only source symbols count)
-		// Delete repair symbols (keep only source symbols count)
-		sourceSymbolsCount := int(result.SourceSymbols)
-		deletedCount := 0
-		for _, fileName := range fileNames {
-			// Skip source symbols and the layout file
-			if deletedCount < sourceSymbolsCount || fileName == "_raptorq_layout.json" {
-				deletedCount++ // Count source symbols even if skipped
+		// Delete repair NUMBER of symbols (keep only source symbols count)
+		repairSymbolsCount := int(block.SymbolsCount) - int(block.SourceSymbolsCount)
+		for i := repairSymbolsCount; i < len(fileNames); i++ {
+			filePath := filepath.Join(blockDir, fileNames[i])
+			// Avoid deleting the layout file if it happens to be sorted here
+			if filepath.Base(filePath) == "_raptorq_layout.json" {
 				continue
 			}
-			// Delete repair symbols
-			err := os.Remove(filepath.Join(ctx.SymbolsDir, fileName))
+			err := os.Remove(filePath)
 			if err != nil {
-				t.Fatalf("Failed to delete repair symbol %s: %v", fileName, err)
+				t.Fatalf("Failed to delete repair symbol: %v", err)
 			}
 		}
 	}
@@ -146,60 +109,11 @@ func (ctx *TestContext) DeleteRepairSymbols(t *testing.T, result *ProcessResult)
 func (ctx *TestContext) KeepRandomSubsetOfSymbols(t *testing.T, result *ProcessResult, percentage float64) {
 	r := rand.New(rand.NewSource(42)) // Use fixed seed for reproducibility
 
-	if len(result.Blocks) > 0 {
-		// For chunked encoding
-		for _, block := range result.Blocks {
-			blockDir := filepath.Join(ctx.SymbolsDir, block.BlockID)
-			entries, err := os.ReadDir(blockDir)
-			if err != nil {
-				t.Fatalf("Failed to read block directory: %v", err)
-			}
-
-			// Sort and process symbols
-			fileNames := make([]string, 0, len(entries))
-			for _, entry := range entries {
-				fileNames = append(fileNames, entry.Name())
-			}
-			// Sort filenames for deterministic behavior
-			fileNames = sortStrings(fileNames)
-
-			// Always keep source symbols, randomly keep repair symbols
-			// Calculate source symbols count (similar assumption as DeleteRepairSymbols)
-			sourceSymbols := int(block.SymbolsCount) - int(result.RepairSymbols)
-			toKeep := make(map[string]bool)
-
-			// Keep all source symbols
-			for i := 0; i < sourceSymbols; i++ {
-				// Don't randomly delete the layout file
-				if fileNames[i] != "_raptorq_layout.json" {
-					toKeep[fileNames[i]] = true
-				}
-			}
-
-			// Randomly keep repair symbols
-			for i := sourceSymbols; i < len(fileNames); i++ {
-				// Don't randomly delete the layout file
-				if fileNames[i] != "_raptorq_layout.json" && r.Float64() < percentage {
-					toKeep[fileNames[i]] = true
-				}
-			}
-
-			// Delete files not in the keep set
-			for _, name := range fileNames {
-				// Ensure layout file is always kept, even if not explicitly in toKeep
-				if !toKeep[name] && name != "_raptorq_layout.json" {
-					err := os.Remove(filepath.Join(blockDir, name))
-					if err != nil {
-						t.Fatalf("Failed to delete symbol %s: %v", name, err)
-					}
-				}
-			}
-		}
-	} else {
-		// For non-chunked encoding
-		entries, err := os.ReadDir(ctx.SymbolsDir)
+	for _, block := range result.Blocks {
+		blockDir := filepath.Join(ctx.SymbolsDir, fmt.Sprintf("block_%d", block.BlockID))
+		entries, err := os.ReadDir(blockDir)
 		if err != nil {
-			t.Fatalf("Failed to read symbols directory: %v", err)
+			t.Fatalf("Failed to read block directory: %v", err)
 		}
 
 		// Sort and process symbols
@@ -211,15 +125,17 @@ func (ctx *TestContext) KeepRandomSubsetOfSymbols(t *testing.T, result *ProcessR
 		fileNames = sortStrings(fileNames)
 
 		// Always keep source symbols, randomly keep repair symbols
-		sourceSymbols := int(result.SourceSymbols)
+		// Calculate source symbols count (similar assumption as DeleteRepairSymbols)
+		sourceSymbols := int(block.SourceSymbolsCount)
 		toKeep := make(map[string]bool)
 
 		// Keep all source symbols
-		// Keep all source symbols and the layout file
 		for i := 0; i < sourceSymbols; i++ {
-			toKeep[fileNames[i]] = true
+			// Don't randomly delete the layout file
+			if fileNames[i] != "_raptorq_layout.json" {
+				toKeep[fileNames[i]] = true
+			}
 		}
-		toKeep["_raptorq_layout.json"] = true // Ensure layout file is kept
 
 		// Randomly keep repair symbols
 		for i := sourceSymbols; i < len(fileNames); i++ {
@@ -231,9 +147,9 @@ func (ctx *TestContext) KeepRandomSubsetOfSymbols(t *testing.T, result *ProcessR
 
 		// Delete files not in the keep set
 		for _, name := range fileNames {
-			// Ensure layout file is always kept
+			// Ensure layout file is always kept, even if not explicitly in toKeep
 			if !toKeep[name] && name != "_raptorq_layout.json" {
-				err := os.Remove(filepath.Join(ctx.SymbolsDir, name))
+				err := os.Remove(filepath.Join(blockDir, name))
 				if err != nil {
 					t.Fatalf("Failed to delete symbol %s: %v", name, err)
 				}

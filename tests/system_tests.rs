@@ -129,14 +129,13 @@ impl TestContext {
                 let entries = fs::read_dir(&block_dir)?;
                 
                 // Keep only source symbols (based on count)
-                let source_symbols = block.symbols_count - block.repair_symbols;
                 let mut files: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
                 
                 // Sort files to ensure deterministic behavior
                 files.sort_by_key(|entry| entry.file_name());
                 
                 // Delete repair symbols (keep only source_symbols count)
-                for entry in files.iter().skip(source_symbols as usize) {
+                for entry in files.iter().skip(block.source_symbols_count as usize) {
                     fs::remove_file(entry.path())?;
                 }
             }
@@ -161,7 +160,7 @@ impl TestContext {
                 let entries = fs::read_dir(&block_dir)?;
                 // Collect file entries and their paths
                 let files: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
-                let source_symbols = (block.symbols_count - block.repair_symbols) as usize;
+                let source_symbols = block.source_symbols_count as usize;
                 
                 // Keep paths instead of DirEntry objects
                 let mut to_keep_paths = Vec::new();

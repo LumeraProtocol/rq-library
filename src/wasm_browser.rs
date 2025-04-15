@@ -6,6 +6,7 @@ mod wasm_browser {
     use web_sys::{File, Blob};
     use wasm_bindgen_futures::future_to_promise;
     use crate::processor::{ProcessorConfig, RaptorQProcessor, ProcessResult};
+    use serde::Serialize;
     use crate::platform::browser;
     use std::sync::Arc;
 
@@ -65,24 +66,31 @@ mod wasm_browser {
                     block_size
                 };
 
-                // Use file paths in the browser-provided filesystem
-                let result = if actual_block_size == 0 {
-                    processor.encode_file_browser(&input_path, &output_dir).await?
-                } else {
-                    processor.encode_file_blocks_browser(&input_path, &output_dir, actual_block_size).await?
-                };
+                // Use generic encode_file method instead of browser-specific versions
+                let result = processor.encode_file(&input_path, &output_dir, actual_block_size, false)?;
 
                 // Convert result to JS object
                 let js_result = Object::new();
 
+                // Extract encoder parameters from the first block if available
+                let encoder_params = if let Some(blocks) = &result.blocks {
+                    if let Some(first_block) = blocks.first() {
+                        let params_array = Uint8Array::new_with_length(first_block.encoder_parameters.len() as u32);
+                        params_array.copy_from(&first_block.encoder_parameters);
+                        params_array
+                    } else {
+                        Uint8Array::new_with_length(0)
+                    }
+                } else {
+                    Uint8Array::new_with_length(0)
+                };
+
                 // Set properties
-                let encoder_params = Uint8Array::new_with_length(result.encoder_parameters.len() as u32);
-                encoder_params.copy_from(&result.encoder_parameters);
                 js_sys::Reflect::set(&js_result, &JsValue::from_str("encoderParameters"), &encoder_params)?;
-                js_sys::Reflect::set(&js_result, &JsValue::from_str("sourceSymbols"), &JsValue::from_f64(result.source_symbols as f64))?;
-                js_sys::Reflect::set(&js_result, &JsValue::from_str("repairSymbols"), &JsValue::from_f64(result.repair_symbols as f64))?;
+                js_sys::Reflect::set(&js_result, &JsValue::from_str("totalSymbolsCount"), &JsValue::from_f64(result.total_symbols_count as f64))?;
+                js_sys::Reflect::set(&js_result, &JsValue::from_str("totalRepairSymbols"), &JsValue::from_f64(result.total_repair_symbols as f64))?;
                 js_sys::Reflect::set(&js_result, &JsValue::from_str("symbolsDirectory"), &JsValue::from_str(&result.symbols_directory))?;
-                js_sys::Reflect::set(&js_result, &JsValue::from_str("symbolsCount"), &JsValue::from_f64(result.symbols_count as f64))?;
+                js_sys::Reflect::set(&js_result, &JsValue::from_str("layoutFilePath"), &JsValue::from_str(&result.layout_file_path))?;
 
                 if let Some(blocks) = &result.blocks {
                     let js_blocks = to_value(&blocks)?;
@@ -90,8 +98,6 @@ mod wasm_browser {
                 } else {
                     js_sys::Reflect::set(&js_result, &JsValue::from_str("blocks"), &JsValue::null())?;
                 }
-
-                js_sys::Reflect::set(&js_result, &JsValue::from_str("layoutFilePath"), &JsValue::from_str(&result.layout_file_path))?;
 
                 Ok(js_result.into())
             })
@@ -103,8 +109,8 @@ mod wasm_browser {
             let processor = self.processor.clone();
 
             future_to_promise(async move {
-                // Decode
-                processor.decode_symbols_browser(&symbols_dir, &output_path, &layout_path).await?;
+                // Use generic decode_symbols method
+                processor.decode_symbols(&symbols_dir, &output_path, &layout_path)?;
 
                 Ok(JsValue::from_bool(true))
             })
@@ -121,5 +127,14 @@ mod wasm_browser {
         pub fn version() -> String {
             "RaptorQ Library v0.1.0 (WASM Browser Edition)".to_string()
         }
+    }
+    
+    // Helper function to convert Rust values to JS values
+    fn to_value<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
+        let serialized = serde_json::to_string(value)
+            .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;
+        let value = js_sys::JSON::parse(&serialized)
+            .map_err(|e| JsValue::from_str(&format!("JSON parse error: {:?}", e)))?;
+        Ok(value)
     }
 }

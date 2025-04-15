@@ -1,7 +1,7 @@
 package raptorq
 
 /*
-#cgo LDFLAGS: -L${SRCDIR}/target/release -lrq_library -lm
+#cgo LDFLAGS: -L${SRCDIR}/target/debug -lrq_library -lm
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -57,20 +57,22 @@ type ProcessorConfig struct {
 
 // ProcessResult holds information about the processing results
 type ProcessResult struct {
-	SourceSymbols    uint32  `json:"source_symbols"`
-	RepairSymbols    uint32  `json:"repair_symbols"`
-	SymbolsDirectory string  `json:"symbols_directory"`
-	SymbolsCount     uint32  `json:"symbols_count"`
-	Blocks           []Block `json:"blocks,omitempty"`
-	LayoutFilePath   string  `json:"layout_file_path"`
+	TotalSymbolsCount  uint32  `json:"total_symbols_count"`
+	TotalRepairSymbols uint32  `json:"total_repair_symbols"`
+	SymbolsDirectory   string  `json:"symbols_directory"`
+	Blocks             []Block `json:"blocks,omitempty"`
+	LayoutFilePath     string  `json:"layout_file_path"`
 }
 
 // Block represents information about a processed block
 type Block struct {
-	BlockID        string `json:"block_id"`
-	OriginalOffset uint64 `json:"original_offset"`
-	Size           uint64 `json:"size"`
-	SymbolsCount   uint32 `json:"symbols_count"`
+	BlockID            uint64  `json:"block_id"`
+	EncoderParameters  []uint8 `json:"encoder_parameters"`
+	OriginalOffset     uint64  `json:"original_offset"`
+	Size               uint64  `json:"size"`
+	SymbolsCount       uint32  `json:"symbols_count"`
+	SourceSymbolsCount uint32  `json:"source_symbols_count"`
+	Hash               string  `json:"hash"`
 }
 
 // NewRaptorQProcessor creates a new RaptorQ processor with the specified configuration
