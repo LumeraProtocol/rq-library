@@ -1,47 +1,36 @@
 [build]
 # No target specified means Cargo uses your host’s default
 
-## Linux
-#[target.x86_64-unknown-linux-gnu]
-#linker = "./.cargo/zig-cc"
-#rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-#
-## Static linux
-#[target.x86_64-unknown-linux-musl]
-#linker = "./.cargo/zig-cc"
-#rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-#
-## Windows
-#[target.x86_64-pc-windows-msvc]
-#linker = "./.cargo/zig-cc"
-#
-#[target.x86_64-pc-windows-gnu]
-#linker = "./.cargo/zig-cc"
+# Linux
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
-## Intel MacOS
-#[target.x86_64-apple-darwin]
-#linker = "./.cargo/zig-cc"
+# Static linux
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
-## Apple Silicon MacOS
-#[target.aarch64-apple-darwin]
-#linker = "./.cargo/zig-cc"
+# Windows
+[target.x86_64-pc-windows-msvc]
 
-## iOS
-#[target.aarch64-apple-ios]
-#linker = "./.cargo/zig-cc"
+[target.x86_64-pc-windows-gnu]
 
-## Android
-#[target.aarch64-linux-android]
-#linker = "./.cargo/zig-cc"
+# Intel MacOS
+[target.x86_64-apple-darwin]
 
-## Android x86_64 simulator
-#[target.x86_64-linux-android]
-#linker = "./.cargo/zig-cc"
-#
-## Raspberry Pi
-#[target.aarch64-unknown-linux-gnu]
-#linker = "./.cargo/zig-cc"
-#
-## Raspberry Pi 32-bit
-#[target.armv7-unknown-linux-gnueabihf]
-#linker = "./.cargo/zig-cc"
+# Apple Silicon MacOS
+[target.aarch64-apple-darwin]
+
+# iOS
+[target.aarch64-apple-ios]
+
+# Android
+[target.aarch64-linux-android]
+
+# Android x86_64 simulator
+[target.x86_64-linux-android]
+
+# Raspberry Pi
+[target.aarch64-unknown-linux-gnu]
+
+# Raspberry Pi 32-bit
+[target.armv7-unknown-linux-gnueabihf]
