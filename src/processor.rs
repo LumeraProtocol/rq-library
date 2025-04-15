@@ -33,7 +33,6 @@
 //! - For more architectural details, see ARCHITECTURE_REVIEW.md.
 
 use raptorq::{Decoder, Encoder, EncodingPacket, ObjectTransmissionInformation};
-use sha3::{Digest, Sha3_256};
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read, Write, BufWriter, Seek, SeekFrom};
 use std::path::{Path};
@@ -156,9 +155,8 @@ pub enum ProcessError {
 }
 
 fn get_hash_as_b58(data: &[u8]) -> String {
-    let mut hasher = Sha3_256::new();
-    hasher.update(data);
-    bs58::encode(hasher.finalize()).into_string()
+    let hash = blake3::hash(data);
+    bs58::encode(hash.as_bytes()).into_string()
 }
 
 pub struct RaptorQProcessor {
@@ -1442,7 +1440,7 @@ mod tests {
         let input_path = dir_path.join("file.bin");
         let output_dir = dir_path.join("output");
         let block_dir = output_dir.join("block_0");
-        
+
         // Create a test file (200 KB)
         create_test_file(&input_path, 200 * 1024).expect("Failed to create test file");
         

@@ -449,7 +449,8 @@ fn encoding_benchmarks(c: &mut Criterion) {
     // group.measurement_time(Duration::from_secs(5));  <-- this is default
     // group.sample_size(100);                          <-- this is default
     bench_encode_1mb(&mut group);
-    
+    println!();
+
     group.measurement_time(Duration::from_secs(40));
     group.sample_size(100);
     bench_encode_10mb(&mut group);
@@ -476,6 +477,7 @@ fn decoding_benchmarks(c: &mut Criterion) {
     // group.measurement_time(Duration::from_secs(5));  <-- this is default
     // group.sample_size(100);                          <-- this is default
     bench_decode_1mb(&mut group);
+    println!();
 
     group.measurement_time(Duration::from_secs(10));
     group.sample_size(100);
