@@ -73,13 +73,13 @@ func (ctx *TestContext) VerifyFilesMatch(t *testing.T) bool {
 
 // DeleteRepairSymbols removes repair symbols, keeping only source symbols
 func (ctx *TestContext) DeleteRepairSymbols(t *testing.T, result *ProcessResult) {
-	if len(result.Chunks) > 0 {
+	if len(result.Blocks) > 0 {
 		// For chunked encoding
-		for _, chunk := range result.Chunks {
-			chunkDir := filepath.Join(ctx.SymbolsDir, chunk.ChunkID)
-			entries, err := os.ReadDir(chunkDir)
+		for _, block := range result.Blocks {
+			blockDir := filepath.Join(ctx.SymbolsDir, block.BlockID)
+			entries, err := os.ReadDir(blockDir)
 			if err != nil {
-				t.Fatalf("Failed to read chunk directory: %v", err)
+				t.Fatalf("Failed to read block directory: %v", err)
 			}
 
 			// Sort and keep only source symbols
@@ -94,9 +94,9 @@ func (ctx *TestContext) DeleteRepairSymbols(t *testing.T, result *ProcessResult)
 			// Calculate source symbols count based on total symbols and repair symbols
 			// Note: This assumes RepairSymbols is consistent across blocks, which might not always be true.
 			// A more robust approach would involve parsing the layout file if needed.
-			sourceSymbols := int(chunk.SymbolsCount) - int(result.RepairSymbols) // Assuming RepairSymbols is per-chunk or consistent
+			sourceSymbols := int(block.SymbolsCount) - int(result.RepairSymbols) // Assuming RepairSymbols is per-block or consistent
 			for i := sourceSymbols; i < len(fileNames); i++ {
-				filePath := filepath.Join(chunkDir, fileNames[i])
+				filePath := filepath.Join(blockDir, fileNames[i])
 				// Avoid deleting the layout file if it happens to be sorted here
 				if filepath.Base(filePath) == "_raptorq_layout.json" {
 					continue
@@ -146,13 +146,13 @@ func (ctx *TestContext) DeleteRepairSymbols(t *testing.T, result *ProcessResult)
 func (ctx *TestContext) KeepRandomSubsetOfSymbols(t *testing.T, result *ProcessResult, percentage float64) {
 	r := rand.New(rand.NewSource(42)) // Use fixed seed for reproducibility
 
-	if len(result.Chunks) > 0 {
+	if len(result.Blocks) > 0 {
 		// For chunked encoding
-		for _, chunk := range result.Chunks {
-			chunkDir := filepath.Join(ctx.SymbolsDir, chunk.ChunkID)
-			entries, err := os.ReadDir(chunkDir)
+		for _, block := range result.Blocks {
+			blockDir := filepath.Join(ctx.SymbolsDir, block.BlockID)
+			entries, err := os.ReadDir(blockDir)
 			if err != nil {
-				t.Fatalf("Failed to read chunk directory: %v", err)
+				t.Fatalf("Failed to read block directory: %v", err)
 			}
 
 			// Sort and process symbols
@@ -165,7 +165,7 @@ func (ctx *TestContext) KeepRandomSubsetOfSymbols(t *testing.T, result *ProcessR
 
 			// Always keep source symbols, randomly keep repair symbols
 			// Calculate source symbols count (similar assumption as DeleteRepairSymbols)
-			sourceSymbols := int(chunk.SymbolsCount) - int(result.RepairSymbols)
+			sourceSymbols := int(block.SymbolsCount) - int(result.RepairSymbols)
 			toKeep := make(map[string]bool)
 
 			// Keep all source symbols
@@ -188,7 +188,7 @@ func (ctx *TestContext) KeepRandomSubsetOfSymbols(t *testing.T, result *ProcessR
 			for _, name := range fileNames {
 				// Ensure layout file is always kept, even if not explicitly in toKeep
 				if !toKeep[name] && name != "_raptorq_layout.json" {
-					err := os.Remove(filepath.Join(chunkDir, name))
+					err := os.Remove(filepath.Join(blockDir, name))
 					if err != nil {
 						t.Fatalf("Failed to delete symbol %s: %v", name, err)
 					}
@@ -254,8 +254,8 @@ func generateRandomFile(path string, sizeBytes int) error {
 	r := rand.New(rand.NewSource(42))
 
 	// Generate and write data in blocks to avoid excessive memory usage
-	const chunkSize = 1024 * 1024 // 1 MB blocks
-	buffer := make([]byte, min(chunkSize, sizeBytes))
+	const blockSize = 1024 * 1024 // 1 MB blocks
+	buffer := make([]byte, min(blockSize, sizeBytes))
 
 	remaining := sizeBytes
 	for remaining > 0 {
@@ -325,13 +325,13 @@ func toHexString(bytes []byte) string {
 }
 
 // Helper function to encode and decode a file with specified size
-func testEncodeDecodeFile(t *testing.T, processor *RaptorQProcessor, fileSizeBytes, chunkSize int) bool {
+func testEncodeDecodeFile(t *testing.T, processor *RaptorQProcessor, fileSizeBytes, blockSize int) bool {
 	// Create test context with input file
 	ctx := NewTestContext(t, fileSizeBytes)
 	defer ctx.Cleanup()
 
 	// Encode the file
-	res, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, chunkSize)
+	res, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, blockSize)
 	if err != nil {
 		t.Fatalf("Failed to encode file: %v", err)
 	}
@@ -422,8 +422,8 @@ func TestSysEncodeLargeFileManualChunk(t *testing.T) {
 	}()
 
 	fileSize := 100 * 1024 * 1024 // 100MB
-	chunkSize := 10 * 1024 * 1024 // 10MB blocks
-	result := testEncodeDecodeFile(t, processor, fileSize, chunkSize)
+	blockSize := 10 * 1024 * 1024 // 10MB blocks
+	result := testEncodeDecodeFile(t, processor, fileSize, blockSize)
 	if !result {
 		t.Fatal("Decoded file does not match original")
 	}
@@ -448,8 +448,8 @@ func TestSysEncodeVeryLargeFile(t *testing.T) {
 	}()
 
 	fileSize := 1024 * 1024 * 1024 // 1GB
-	chunkSize := 50 * 1024 * 1024  // 50MB blocks
-	result := testEncodeDecodeFile(t, processor, fileSize, chunkSize)
+	blockSize := 50 * 1024 * 1024  // 50MB blocks
+	result := testEncodeDecodeFile(t, processor, fileSize, blockSize)
 	if !result {
 		t.Fatal("Decoded file does not match original")
 	}
@@ -785,8 +785,8 @@ func setupBenchmarkEnv(b *testing.B, fileSize int) *TestContext {
 
 // prepareFilesForDecoding encodes a file and returns the path to the layout file.
 // This is used to setup test data before running the decode benchmarks.
-func prepareFilesForDecoding(b *testing.B, processor *RaptorQProcessor, ctx *TestContext, chunkSize int) string {
-	res, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, chunkSize)
+func prepareFilesForDecoding(b *testing.B, processor *RaptorQProcessor, ctx *TestContext, blockSize int) string {
+	res, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, blockSize)
 	if err != nil {
 		b.Fatalf("Failed to encode file for decode benchmark setup: %v", err)
 	}
@@ -925,14 +925,14 @@ func BenchmarkEncode1GB(b *testing.B) {
 	defer ctx.Cleanup()
 
 	// Use chunking for large file
-	chunkSize := 50 * 1024 * 1024 // 50MB blocks
+	blockSize := 50 * 1024 * 1024 // 50MB blocks
 
 	// Reset timer before starting the benchmark loop
 	b.ResetTimer()
 
 	// Run the benchmark
 	for i := 0; i < b.N; i++ {
-		_, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, chunkSize)
+		_, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, blockSize)
 		if err != nil {
 			b.Fatalf("Failed to encode file: %v", err)
 		}
@@ -963,7 +963,7 @@ func BenchmarkDecode1MB(b *testing.B) {
 	defer ctx.Cleanup()
 
 	// Encode file to generate symbols (outside benchmark loop)
-	layoutPath := prepareFilesForDecoding(b, processor, ctx, 0) // 0 for auto chunk size
+	layoutPath := prepareFilesForDecoding(b, processor, ctx, 0) // 0 for auto block size
 
 	// Reset timer before starting the benchmark loop
 	b.ResetTimer()
@@ -1000,7 +1000,7 @@ func BenchmarkDecode10MB(b *testing.B) {
 	defer ctx.Cleanup()
 
 	// Encode file to generate symbols (outside benchmark loop)
-	layoutPath := prepareFilesForDecoding(b, processor, ctx, 0) // 0 for auto chunk size
+	layoutPath := prepareFilesForDecoding(b, processor, ctx, 0) // 0 for auto block size
 
 	// Reset timer before starting the benchmark loop
 	b.ResetTimer()
@@ -1037,7 +1037,7 @@ func BenchmarkDecode100MB(b *testing.B) {
 	defer ctx.Cleanup()
 
 	// Encode file to generate symbols (outside benchmark loop)
-	layoutPath := prepareFilesForDecoding(b, processor, ctx, 0) // 0 for auto chunk size
+	layoutPath := prepareFilesForDecoding(b, processor, ctx, 0) // 0 for auto block size
 
 	// Reset timer before starting the benchmark loop
 	b.ResetTimer()
@@ -1079,10 +1079,10 @@ func BenchmarkDecode1GB(b *testing.B) {
 	defer ctx.Cleanup()
 
 	// Use chunking for large file
-	chunkSize := 50 * 1024 * 1024 // 50MB blocks
+	blockSize := 50 * 1024 * 1024 // 50MB blocks
 
 	// Encode file to generate symbols (outside benchmark loop)
-	layoutPath := prepareFilesForDecoding(b, processor, ctx, chunkSize)
+	layoutPath := prepareFilesForDecoding(b, processor, ctx, blockSize)
 
 	// Reset timer before starting the benchmark loop
 	b.ResetTimer()

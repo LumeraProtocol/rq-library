@@ -13,7 +13,7 @@ extern _Bool raptorq_free_session(uintptr_t session_id);
 extern int32_t raptorq_encode_file(uintptr_t session_id, const char *input_path, const char *output_dir, uintptr_t block_size, char *result_buffer, uintptr_t result_buffer_len);
 extern int32_t raptorq_get_last_error(uintptr_t session_id, char *error_buffer, uintptr_t error_buffer_len);
 extern int32_t raptorq_decode_symbols(uintptr_t session_id, const char *symbols_dir, const char *output_path, const char *layout_path);
-extern uintptr_t raptorq_get_recommended_chunk_size(uintptr_t session_id, uint64_t file_size);
+extern uintptr_t raptorq_get_recommended_block_size(uintptr_t session_id, uint64_t file_size);
 extern int32_t raptorq_version(char *version_buffer, uintptr_t version_buffer_len);
 */
 import "C"
@@ -61,13 +61,13 @@ type ProcessResult struct {
 	RepairSymbols    uint32  `json:"repair_symbols"`
 	SymbolsDirectory string  `json:"symbols_directory"`
 	SymbolsCount     uint32  `json:"symbols_count"`
-	Chunks           []Chunk `json:"blocks,omitempty"`
+	Blocks           []Block `json:"blocks,omitempty"`
 	LayoutFilePath   string  `json:"layout_file_path"`
 }
 
-// Chunk represents information about a processed chunk
-type Chunk struct {
-	ChunkID        string `json:"block_id"`
+// Block represents information about a processed block
+type Block struct {
+	BlockID        string `json:"block_id"`
 	OriginalOffset uint64 `json:"original_offset"`
 	Size           uint64 `json:"size"`
 	SymbolsCount   uint32 `json:"symbols_count"`
@@ -138,7 +138,7 @@ func finalizeProcessor(p *RaptorQProcessor) {
 }
 
 // EncodeFile encodes a file using RaptorQ
-func (p *RaptorQProcessor) EncodeFile(inputPath, outputDir string, chunkSize int) (*ProcessResult, error) {
+func (p *RaptorQProcessor) EncodeFile(inputPath, outputDir string, blockSize int) (*ProcessResult, error) {
 	if p.SessionID == 0 {
 		return nil, fmt.Errorf("RaptorQ session is closed")
 	}
@@ -158,7 +158,7 @@ func (p *RaptorQProcessor) EncodeFile(inputPath, outputDir string, chunkSize int
 		C.uintptr_t(p.SessionID),
 		cInputPath,
 		cOutputDir,
-		C.uintptr_t(chunkSize),
+		C.uintptr_t(blockSize),
 		resultBuf,
 		C.uintptr_t(resultBufSize),
 	)
@@ -233,13 +233,13 @@ func (p *RaptorQProcessor) DecodeSymbols(symbolsDir, outputPath, layoutPath stri
 	}
 }
 
-// GetRecommendedChunkSize returns a recommended chunk size for a file
-func (p *RaptorQProcessor) GetRecommendedChunkSize(fileSize uint64) int {
+// GetRecommendedBlockSize returns a recommended block size for a file
+func (p *RaptorQProcessor) GetRecommendedBlockSize(fileSize uint64) int {
 	if p.SessionID == 0 {
 		return 0
 	}
 
-	return int(C.raptorq_get_recommended_chunk_size(
+	return int(C.raptorq_get_recommended_block_size(
 		C.uintptr_t(p.SessionID),
 		C.uint64_t(fileSize),
 	))

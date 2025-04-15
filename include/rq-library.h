@@ -82,7 +82,7 @@ int32_t raptorq_get_last_error(uintptr_t session_id,
  * * `session_id` - Session ID returned from raptorq_init_session
  * * `symbols_dir` - Directory containing the symbols
  * * `output_path` - Path where the decoded file will be written
- * * `layout_path` - Path to the layout file (containing encoder parameters and chunk information)
+ * * `layout_path` - Path to the layout file (containing encoder parameters and block information)
  *
  * Returns:
  * * 0 on success
@@ -97,17 +97,17 @@ int32_t raptorq_decode_symbols(uintptr_t session_id,
                                const char *layout_path);
 
 /**
- * Gets a recommended chunk size based on file size and available memory
+ * Gets a recommended block size based on file size and available memory
  *
  * Arguments:
  * * `session_id` - Session ID returned from raptorq_init_session
  * * `file_size` - Size of the file to process
  *
  * Returns:
- * * Recommended chunk size in bytes
- * * 0 if it should not chunk or on error
+ * * Recommended block size in bytes
+ * * 0 if it should not block or on error
  */
-uintptr_t raptorq_get_recommended_chunk_size(uintptr_t session_id, uint64_t file_size);
+uintptr_t raptorq_get_recommended_block_size(uintptr_t session_id, uint64_t file_size);
 
 /**
  * Version information

@@ -20,7 +20,7 @@ include = [
     "raptorq_encode_file",
     "raptorq_get_last_error",
     "raptorq_decode_symbols",
-    "raptorq_get_recommended_chunk_size",
+    "raptorq_get_recommended_block_size",
     "raptorq_version",
 ]
 # Also explicitly exclude functions from platform.rs that are not part of the C FFI

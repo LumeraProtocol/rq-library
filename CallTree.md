@@ -46,9 +46,9 @@ encode_file_streamed()
 └── encode_file_in_blocks() [if chunking]
     ├── create_dir_all()
     ├── open_and_validate_file()
-    ├── create_dir_all() [for each chunk]
+    ├── create_dir_all() [for each block]
     │
-    ├── encode_stream() [for each chunk]
+    ├── encode_stream() [for each block]
     │   ├── calculate_repair_symbols()
     │   ├── Encoder::new()
     │   ├── Encoder::get_encoded_packets()
@@ -92,11 +92,11 @@ decode_symbols()
     ├── decode_chunked_file_with_layout() [if chunked with layout]
     │   ├── sort blocks
     │   │
-    │   ├── [For each chunk]
+    │   ├── [For each block]
     │   │   ├── ObjectTransmissionInformation::deserialize()
     │   │   ├── Decoder::new()
     │   │   │
-    │   │   ├── [For each symbol in chunk layout]
+    │   │   ├── [For each symbol in block layout]
     │   │   │   ├── read_to_end()
     │   │   │   ├── EncodingPacket::deserialize()
     │   │   │   └── safe_decode()
@@ -109,12 +109,12 @@ decode_symbols()
     │   │   │       └── safe_decode() [for each]
     │   │   │
     │   │   ├── seek() [to correct position]
-    │   │   └── write_all() [write decoded chunk data]
+    │   │   └── write_all() [write decoded block data]
     │
     └── decode_chunked_file_internal() [if chunked without detailed layout]
         ├── sort blocks
         │
-        ├── [For each chunk]
+        ├── [For each block]
         │   ├── ObjectTransmissionInformation::deserialize()
         │   ├── Decoder::new()
         │   ├── read_symbol_files()
@@ -122,7 +122,7 @@ decode_symbols()
         │       ├── EncodingPacket::deserialize() [for each]
         │       ├── safe_decode() [for each]
         │       │   └── decoder.decode() [wrapped in catch_unwind]
-        │       └── write_all() [write chunk data]
+        │       └── write_all() [write block data]
 ```
 
 ## Helper Functions

@@ -200,7 +200,7 @@ pub extern "C" fn raptorq_get_last_error(
 /// * `session_id` - Session ID returned from raptorq_init_session
 /// * `symbols_dir` - Directory containing the symbols
 /// * `output_path` - Path where the decoded file will be written
-/// * `layout_path` - Path to the layout file (containing encoder parameters and chunk information)
+/// * `layout_path` - Path to the layout file (containing encoder parameters and block information)
 ///
 /// Returns:
 /// * 0 on success
@@ -251,17 +251,17 @@ pub extern "C" fn raptorq_decode_symbols(
     }
 }
 
-/// Gets a recommended chunk size based on file size and available memory
+/// Gets a recommended block size based on file size and available memory
 ///
 /// Arguments:
 /// * `session_id` - Session ID returned from raptorq_init_session
 /// * `file_size` - Size of the file to process
 ///
 /// Returns:
-/// * Recommended chunk size in bytes
-/// * 0 if it should not chunk or on error
+/// * Recommended block size in bytes
+/// * 0 if it should not block or on error
 #[unsafe(no_mangle)]
-pub extern "C" fn raptorq_get_recommended_chunk_size(
+pub extern "C" fn raptorq_get_recommended_block_size(
     session_id: usize,
     file_size: u64,
 ) -> usize {
@@ -489,7 +489,7 @@ mod ffi_tests {
                     session_id,
                     CString::new(input_path.to_string_lossy().as_ref()).unwrap().as_ptr(),
                     CString::new(output_dir.to_string_lossy().as_ref()).unwrap().as_ptr(),
-                    0, // auto chunk size
+                    0, // auto block size
                     result_buffer.as_mut_ptr() as *mut c_char,
                     result_buffer.len(),
                 );
@@ -1023,13 +1023,13 @@ mod ffi_tests {
             raptorq_free_session(session_id);
         }
         
-        // Tests for raptorq_get_recommended_chunk_size
+        // Tests for raptorq_get_recommended_block_size
         #[test]
         fn test_ffi_chunk_size_invalid_session() {
             let invalid_session_id = 99999;
             let file_size = 1024 * 1024; // 1 MB
             
-            let result = raptorq_get_recommended_chunk_size(invalid_session_id, file_size);
+            let result = raptorq_get_recommended_block_size(invalid_session_id, file_size);
             
             assert_eq!(result, 0, "Invalid session ID should return 0");
         }
@@ -1043,17 +1043,17 @@ mod ffi_tests {
             let medium_file = 1024 * 1024 * 10; // 10 MB
             let large_file = 1024 * 1024 * 1024; // 1 GB
             
-            let small_result = raptorq_get_recommended_chunk_size(session_id, small_file);
-            let medium_result = raptorq_get_recommended_chunk_size(session_id, medium_file);
-            let large_result = raptorq_get_recommended_chunk_size(session_id, large_file);
+            let small_result = raptorq_get_recommended_block_size(session_id, small_file);
+            let medium_result = raptorq_get_recommended_block_size(session_id, medium_file);
+            let large_result = raptorq_get_recommended_block_size(session_id, large_file);
             
             // We don't know the exact values to expect, but the function should return
             // some reasonable values based on the implementation
             
-            // For small files, it might return 0 (don't chunk)
-            // For large files, it should return a non-zero chunk size
+            // For small files, it might return 0 (don't block)
+            // For large files, it should return a non-zero block size
             if large_file > medium_file && medium_file > small_file {
-                // If the implementation scales chunk size with file size, we'd expect:
+                // If the implementation scales block size with file size, we'd expect:
                 // large_result >= medium_result >= small_result
                 assert!(large_result >= medium_result && medium_result >= small_result);
             }

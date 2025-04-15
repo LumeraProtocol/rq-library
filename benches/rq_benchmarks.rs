@@ -54,7 +54,7 @@ fn encode_file_for_decoding(processor: &RaptorQProcessor, input_path: &Path, out
         .encode_file_streamed(
             input_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
-            0, // Let the processor determine chunk size
+            0, // Let the processor determine block size
             false,
         )
         .expect("Failed to encode file");
@@ -95,7 +95,7 @@ fn bench_encode_1mb(group: &mut BenchmarkGroup<WallTime>) {
                     .encode_file_streamed(
                         input_file.to_str().unwrap(),
                         output_dir.to_str().unwrap(),
-                        0, // Let the processor determine chunk size
+                        0, // Let the processor determine block size
                         false,
                     )
                     .expect("Failed to encode file");
@@ -140,7 +140,7 @@ fn bench_encode_10mb(group: &mut BenchmarkGroup<WallTime>) {
                     .encode_file_streamed(
                         input_file.to_str().unwrap(),
                         output_dir.to_str().unwrap(),
-                        0, // Let the processor determine chunk size
+                        0, // Let the processor determine block size
                         false,
                     )
                     .expect("Failed to encode file");
@@ -185,7 +185,7 @@ fn bench_encode_100mb(group: &mut BenchmarkGroup<WallTime>) {
                     .encode_file_streamed(
                         input_file.to_str().unwrap(),
                         output_dir.to_str().unwrap(),
-                        0, // Let the processor determine chunk size
+                        0, // Let the processor determine block size
                         false,
                     )
                     .expect("Failed to encode file");
@@ -230,7 +230,7 @@ fn bench_encode_1gb(group: &mut BenchmarkGroup<WallTime>) {
                     .encode_file_streamed(
                         input_file.to_str().unwrap(),
                         output_dir.to_str().unwrap(),
-                        0, // Let the processor determine chunk size
+                        0, // Let the processor determine block size
                         false,
                     )
                     .expect("Failed to encode file");

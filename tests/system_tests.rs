@@ -23,8 +23,8 @@ fn generate_random_file(path: &Path, size_bytes: usize) -> std::io::Result<()> {
     let mut rng = StdRng::from_seed(seed);
     
     // Generate and write data in blocks to avoid excessive memory usage
-    const CHUNK_SIZE: usize = 1024 * 1024; // 1 MB blocks
-    let mut buffer = vec![0u8; std::cmp::min(CHUNK_SIZE, size_bytes)];
+    const BLOCK_SIZE: usize = 1024 * 1024; // 1 MB blocks
+    let mut buffer = vec![0u8; std::cmp::min(BLOCK_SIZE, size_bytes)];
     
     let mut remaining = size_bytes;
     while remaining > 0 {
@@ -122,12 +122,12 @@ impl TestContext {
     fn delete_repair_symbols(&self, result: &ProcessResult) -> std::io::Result<()> {
         if let Some(blocks) = &result.blocks {
             // For chunked encoding
-            for chunk in blocks {
-                let block_dir = self.symbols_dir.join(&chunk.block_id);
+            for block in blocks {
+                let block_dir = self.symbols_dir.join(&block.block_id);
                 let entries = fs::read_dir(&block_dir)?;
                 
                 // Keep only source symbols (based on count)
-                let source_symbols = chunk.symbols_count - result.repair_symbols;
+                let source_symbols = block.symbols_count - result.repair_symbols;
                 let mut files: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
                 
                 // Sort files to ensure deterministic behavior
@@ -167,12 +167,12 @@ impl TestContext {
         
         if let Some(blocks) = &result.blocks {
             // For chunked encoding
-            for chunk in blocks {
-                let block_dir = self.symbols_dir.join(&chunk.block_id);
+            for block in blocks {
+                let block_dir = self.symbols_dir.join(&block.block_id);
                 let entries = fs::read_dir(&block_dir)?;
                 // Collect file entries and their paths
                 let files: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
-                let source_symbols = (chunk.symbols_count - result.repair_symbols) as usize;
+                let source_symbols = (block.symbols_count - result.repair_symbols) as usize;
                 
                 // Keep paths instead of DirEntry objects
                 let mut to_keep_paths = Vec::new();
