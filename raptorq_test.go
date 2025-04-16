@@ -2,7 +2,6 @@ package raptorq
 
 // To run `LD_LIBRARY_PATH="$(pwd)/target/debug" go test ./... "$@"`
 
-
 import (
 	"bytes"
 	"crypto/sha256"
@@ -673,7 +672,7 @@ const (
 // Returns the test context, which should be cleaned up after use
 func setupBenchmarkEnv(b *testing.B, fileSize int) *TestContext {
 	// Create temporary directory
-	tempDir, err := os.MkdirTemp("", "raptorq-bench-")
+	tempDir, err := os.MkdirTemp("/dev/shm", "raptorq-bench-")
 	if err != nil {
 		b.Fatalf("Failed to create temp directory: %v", err)
 	}
@@ -802,12 +801,14 @@ func BenchmarkEncode100MB(b *testing.B) {
 	ctx := setupBenchmarkEnv(b, SIZE_100MB)
 	defer ctx.Cleanup()
 
+	blockSize := 5 * 1024 * 1024 // 1MB blocks
+
 	// Reset timer before starting the benchmark loop
 	b.ResetTimer()
 
 	// Run the benchmark
 	for i := 0; i < b.N; i++ {
-		_, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, 0)
+		_, err := processor.EncodeFile(ctx.InputFile, ctx.SymbolsDir, blockSize)
 		if err != nil {
 			b.Fatalf("Failed to encode file: %v", err)
 		}

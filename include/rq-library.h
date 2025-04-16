@@ -45,12 +45,18 @@ bool raptorq_free_session(uintptr_t session_id);
  * * `result_buffer_len` - Length of the result buffer
  *
  * Returns:
- * * 0 on success
- * * -1 on generic error
- * * -2 on file not found
- * * -3 on encoding failure
- * * -4 on invalid session
- * * -5 on memory allocation error
+ * *   0 on success
+ * *  -1 on generic error
+ * *  -2 on invalid parameters
+ * *  -3 on invalid response
+ * *  -4 on bad return buffer size
+ * *  -4 on encoding failure
+ * *  -5 on invalid session
+ * * -11 on IO error
+ * * -12 on File not found
+ * * -13 on Encoding failed
+ * * -15 on Memory limit exceeded
+ * * -16 on Concurrency limit reached
  */
 int32_t raptorq_encode_file(uintptr_t session_id,
                             const char *input_path,
@@ -85,11 +91,18 @@ int32_t raptorq_get_last_error(uintptr_t session_id,
  * * `layout_path` - Path to the layout file (containing encoder parameters and block information)
  *
  * Returns:
- * * 0 on success
- * * -1 on generic error
- * * -2 on file not found
- * * -3 on decoding failure
- * * -4 on invalid session
+ * *   0 on success
+ * *  -1 on generic error
+ * *  -2 on invalid parameters
+ * *  -3 on invalid response
+ * *  -4 on bad return buffer size
+ * *  -4 on encoding failure
+ * *  -5 on invalid session
+ * * -11 on IO error
+ * * -12 on File not found
+ * * -14 on Decoding failed
+ * * -15 on Memory limit exceeded
+ * * -16 on Concurrency limit reached
  */
 int32_t raptorq_decode_symbols(uintptr_t session_id,
                                const char *symbols_dir,

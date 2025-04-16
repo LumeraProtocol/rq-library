@@ -65,12 +65,18 @@ pub extern "C" fn raptorq_free_session(session_id: usize) -> bool {
 /// * `result_buffer_len` - Length of the result buffer
 ///
 /// Returns:
-/// * 0 on success
-/// * -1 on generic error
-/// * -2 on file not found
-/// * -3 on encoding failure
-/// * -4 on invalid session
-/// * -5 on memory allocation error
+/// *   0 on success
+/// *  -1 on generic error
+/// *  -2 on invalid parameters
+/// *  -3 on invalid response
+/// *  -4 on bad return buffer size
+/// *  -4 on encoding failure
+/// *  -5 on invalid session
+/// * -11 on IO error
+/// * -12 on File not found
+/// * -13 on Encoding failed
+/// * -15 on Memory limit exceeded
+/// * -16 on Concurrency limit reached
 #[unsafe(no_mangle)]
 pub extern "C" fn raptorq_encode_file(
     session_id: usize,
@@ -82,23 +88,23 @@ pub extern "C" fn raptorq_encode_file(
 ) -> i32 {
     // Basic null pointer checks
     if input_path.is_null() || output_dir.is_null() || result_buffer.is_null() {
-        return -1;
+        return -2;
     }
 
     let input_path_str = match unsafe { CStr::from_ptr(input_path) }.to_str() {
         Ok(s) => s,
-        Err(_) => return -1,
+        Err(_) => return -2,
     };
 
     let output_dir_str = match unsafe { CStr::from_ptr(output_dir) }.to_str() {
         Ok(s) => s,
-        Err(_) => return -1,
+        Err(_) => return -2,
     };
 
     let processors = PROCESSORS.lock();
     let processor = match processors.get(&session_id) {
         Some(p) => p,
-        None => return -4,
+        None => return -5,
     };
 
     match processor.encode_file(input_path_str, output_dir_str, block_size, false) {
@@ -112,12 +118,12 @@ pub extern "C" fn raptorq_encode_file(
             // Copy result to result buffer
             let c_result = match CString::new(result_json) {
                 Ok(s) => s,
-                Err(_) => return -5,
+                Err(_) => return -3,
             };
 
             let result_bytes = c_result.as_bytes_with_nul();
             if result_bytes.len() > result_buffer_len {
-                return -5;
+                return -4;
             }
 
             unsafe {
@@ -131,8 +137,11 @@ pub extern "C" fn raptorq_encode_file(
             0
         },
         Err(e) => match e {
-            ProcessError::FileNotFound(_) => -2,
-            ProcessError::EncodingFailed(_) => -3,
+            ProcessError::IOError(_) => -11,
+            ProcessError::FileNotFound(_) => -12,
+            ProcessError::EncodingFailed(_) => -13,
+            ProcessError::MemoryLimitExceeded { .. } => -15,
+            ProcessError::ConcurrencyLimitReached => -16,
             _ => -1,
         },
     }
@@ -203,11 +212,18 @@ pub extern "C" fn raptorq_get_last_error(
 /// * `layout_path` - Path to the layout file (containing encoder parameters and block information)
 ///
 /// Returns:
-/// * 0 on success
-/// * -1 on generic error
-/// * -2 on file not found
-/// * -3 on decoding failure
-/// * -4 on invalid session
+/// *   0 on success
+/// *  -1 on generic error
+/// *  -2 on invalid parameters
+/// *  -3 on invalid response
+/// *  -4 on bad return buffer size
+/// *  -4 on encoding failure
+/// *  -5 on invalid session
+/// * -11 on IO error
+/// * -12 on File not found
+/// * -14 on Decoding failed
+/// * -15 on Memory limit exceeded
+/// * -16 on Concurrency limit reached
 #[unsafe(no_mangle)]
 pub extern "C" fn raptorq_decode_symbols(
     session_id: usize,
@@ -222,17 +238,17 @@ pub extern "C" fn raptorq_decode_symbols(
 
     let symbols_dir_str = match unsafe { CStr::from_ptr(symbols_dir) }.to_str() {
         Ok(s) => s,
-        Err(_) => return -1,
+        Err(_) => return -10,
     };
 
     let output_path_str = match unsafe { CStr::from_ptr(output_path) }.to_str() {
         Ok(s) => s,
-        Err(_) => return -1,
+        Err(_) => return -11,
     };
 
     let layout_path_str = match unsafe { CStr::from_ptr(layout_path) }.to_str() {
         Ok(s) => s,
-        Err(_) => return -1,
+        Err(_) => return -12,
     };
 
     let processors = PROCESSORS.lock();

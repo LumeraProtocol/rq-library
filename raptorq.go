@@ -152,7 +152,7 @@ func (p *RaptorQProcessor) EncodeFile(inputPath, outputDir string, blockSize int
 	defer C.free(unsafe.Pointer(cOutputDir))
 
 	// Buffer for result (4KB should be enough for metadata)
-	resultBufSize := 4096
+	resultBufSize := 16*1024//4096
 	resultBuf := (*C.char)(C.malloc(C.size_t(resultBufSize)))
 	defer C.free(unsafe.Pointer(resultBuf))
 
@@ -177,7 +177,7 @@ func (p *RaptorQProcessor) EncodeFile(inputPath, outputDir string, blockSize int
 	case -4:
 		return nil, fmt.Errorf("invalid session")
 	case -5:
-		return nil, fmt.Errorf("memory allocation error")
+		return nil, fmt.Errorf("memory allocation error %s", p.getLastError())
 	default:
 		return nil, fmt.Errorf("unknown error code %d: %s", res, p.getLastError())
 	}
