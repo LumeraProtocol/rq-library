@@ -30,7 +30,9 @@ Following is a list of supported targets on different platforms:
   * iOS
   * macOS Intel
   * macOS Apple Silicon
-  * Windows with `x86_64-w64-mingw32-gcc` (`brew install mingw-w64`)
+  * Windows () with `x86_64-w64-mingw32-gcc`
+    * macOS - `brew install mingw-w64`
+    * Linux - `sudo apt install gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64`
   * Linux static
 * Linux
   * Android
@@ -57,12 +59,12 @@ cargo build --target aarch64-apple-darwin --release
 cargo build --target aarch64-apple-ios --release
 ```
 
-#### Linux - dynamic linking
+#### Linux - for dynamic linking
 ```bash
 cargo build --target x86_64-unknown-linux-gnu --release
 ```
 
-#### Linux - static linking
+#### Linux - for static linking
 ```bash
 cargo build --target x86_64-unknown-linux-musl --release
 ```
@@ -73,6 +75,9 @@ cargo build --target aarch64-linux-android --release
 ```
 
 #### Windows
+```bash
+cargo build --target x86_64-pc-windows-gnu --release
+```
 ```bash
 cargo build --target x86_64-pc-windows-msvc --release
 ```

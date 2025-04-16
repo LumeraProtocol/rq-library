@@ -95,10 +95,10 @@ pub struct BlockInfo {
     pub source_symbols_count: u64,
     pub hash: String,
 }
-const DEFAULT_SYMBOL_SIZE: u16 = 65535;  // 64 KiB, this is MAX possible value for now - symbol size is uint16 in RaptorQ
+const DEFAULT_SYMBOL_SIZE_B: u16 = 65535;  // 64 KiB, this is MAX possible value for now - symbol size is uint16 in RaptorQ
 const DEFAULT_REDUNDANCY_FACTOR: u8 = 4;
-const DEFAULT_STREAM_BUFFER_SIZE: usize = 1 * 1024 * 1024; // 1 MiB
-const DEFAULT_MAX_MEMORY: u64 = 16*1024; // 16 GB
+const DEFAULT_STREAM_BUFFER_SIZE_B: usize = 1 * 1024 * 1024; // 1 MiB
+const DEFAULT_MAX_MEMORY_MB: u64 = 16 * 1024; // 16 GB
 const DEFAULT_CONCURRENCY_LIMIT: u64 = 4;
 const MEMORY_SAFETY_MARGIN: f64 = 1.5; // 50% safety margin
 
@@ -122,9 +122,9 @@ pub struct ProcessorConfig {
 impl Default for ProcessorConfig {
     fn default() -> Self {
         Self {
-            symbol_size: DEFAULT_SYMBOL_SIZE,
+            symbol_size: DEFAULT_SYMBOL_SIZE_B,
             redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
-            max_memory_mb: DEFAULT_MAX_MEMORY,
+            max_memory_mb: DEFAULT_MAX_MEMORY_MB,
             concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
         }
     }
@@ -396,7 +396,7 @@ impl RaptorQProcessor {
         // whichever is larger
         let buffer_size = std::cmp::max(
             (data_size / 16) as usize,
-            std::cmp::min(DEFAULT_STREAM_BUFFER_SIZE, data_size as usize)
+            std::cmp::min(DEFAULT_STREAM_BUFFER_SIZE_B, data_size as usize)
         );
 
         debug!("Using buffer size of {}B for {}B of data", buffer_size, data_size);
@@ -931,9 +931,9 @@ mod tests {
     fn test_config_default() {
         let config = ProcessorConfig::default();
         
-        assert_eq!(config.symbol_size, DEFAULT_SYMBOL_SIZE);
+        assert_eq!(config.symbol_size, DEFAULT_SYMBOL_SIZE_B);
         assert_eq!(config.redundancy_factor, DEFAULT_REDUNDANCY_FACTOR);
-        assert_eq!(config.max_memory_mb, DEFAULT_MAX_MEMORY);
+        assert_eq!(config.max_memory_mb, DEFAULT_MAX_MEMORY_MB);
         assert_eq!(config.concurrency_limit, DEFAULT_CONCURRENCY_LIMIT);
     }
 
@@ -1012,7 +1012,7 @@ mod tests {
     #[test]
     fn test_block_size_large_file() {
         let config = ProcessorConfig {
-            symbol_size: DEFAULT_SYMBOL_SIZE,
+            symbol_size: DEFAULT_SYMBOL_SIZE_B,
             redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
             max_memory_mb: 100, // Deliberately small to force splitting
             concurrency_limit: 4,
@@ -1033,25 +1033,25 @@ mod tests {
         // Create an array of processor configs with different memory limits
         let configs = [
             ProcessorConfig {
-                symbol_size: DEFAULT_SYMBOL_SIZE,
+                symbol_size: DEFAULT_SYMBOL_SIZE_B,
                 redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
                 max_memory_mb: 8_000, // 8GB
                 concurrency_limit: 4,
             },
             ProcessorConfig {
-                symbol_size: DEFAULT_SYMBOL_SIZE,
+                symbol_size: DEFAULT_SYMBOL_SIZE_B,
                 redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
                 max_memory_mb: 16_000, // 16GB
                 concurrency_limit: 4,
             },
             ProcessorConfig {
-                symbol_size: DEFAULT_SYMBOL_SIZE,
+                symbol_size: DEFAULT_SYMBOL_SIZE_B,
                 redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
                 max_memory_mb: 32_000, // 32GB
                 concurrency_limit: 4,
             },
             ProcessorConfig {
-                symbol_size: DEFAULT_SYMBOL_SIZE,
+                symbol_size: DEFAULT_SYMBOL_SIZE_B,
                 redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
                 max_memory_mb: 64_000, // 64GB
                 concurrency_limit: 4,
@@ -1240,7 +1240,7 @@ mod tests {
         create_test_file(&input_path, 3 * 1024 * 1024).expect("Failed to create test file");
         
         let config = ProcessorConfig {
-            symbol_size: DEFAULT_SYMBOL_SIZE,
+            symbol_size: DEFAULT_SYMBOL_SIZE_B,
             redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
             max_memory_mb: 1, // Very small memory limit to force splitting
             concurrency_limit: 4,
@@ -1338,7 +1338,7 @@ mod tests {
         
         // Create processor with tiny memory limit
         let config = ProcessorConfig {
-            symbol_size: DEFAULT_SYMBOL_SIZE,
+            symbol_size: DEFAULT_SYMBOL_SIZE_B,
             redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
             max_memory_mb: 1, // 1 MB max memory
             concurrency_limit: 4,
@@ -1369,9 +1369,9 @@ mod tests {
         
         // Create processor with concurrency limit of 1
         let config = ProcessorConfig {
-            symbol_size: DEFAULT_SYMBOL_SIZE,
+            symbol_size: DEFAULT_SYMBOL_SIZE_B,
             redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
-            max_memory_mb: DEFAULT_MAX_MEMORY,
+            max_memory_mb: DEFAULT_MAX_MEMORY_MB,
             concurrency_limit: 1,
         };
         
@@ -1543,7 +1543,7 @@ mod tests {
         // Create encoded symbols
         let (encoder_params, packets) = encode_test_data(
             &original_data,
-            DEFAULT_SYMBOL_SIZE,
+            DEFAULT_SYMBOL_SIZE_B,
             10
         );
         
@@ -1618,7 +1618,7 @@ mod tests {
             // Encode block
             let (params, packets) = encode_test_data(
                 &block_data,
-                DEFAULT_SYMBOL_SIZE,
+                DEFAULT_SYMBOL_SIZE_B,
                 5
             );
 
@@ -1679,7 +1679,7 @@ mod tests {
         // This should not be enough for decoding
         let (encoder_params, mut packets) = encode_test_data(
             &original_data,
-            DEFAULT_SYMBOL_SIZE,
+            DEFAULT_SYMBOL_SIZE_B,
             10
         );
         
@@ -1740,7 +1740,7 @@ mod tests {
         // Create encoded symbols
         let (encoder_params, mut packets) = encode_test_data(
             &original_data,
-            DEFAULT_SYMBOL_SIZE,
+            DEFAULT_SYMBOL_SIZE_B,
             10
         );
         
@@ -1816,7 +1816,7 @@ mod tests {
         // Create encoded symbols
         let (_, packets) = encode_test_data(
             &original_data,
-            DEFAULT_SYMBOL_SIZE,
+            DEFAULT_SYMBOL_SIZE_B,
             10
         );
         
@@ -1882,7 +1882,7 @@ mod tests {
         let config = ProcessorConfig {
             symbol_size: 1024,
             redundancy_factor: 10,
-            max_memory_mb: DEFAULT_MAX_MEMORY,
+            max_memory_mb: DEFAULT_MAX_MEMORY_MB,
             concurrency_limit: 1,
         };
         
@@ -2038,7 +2038,7 @@ mod tests {
         let processor = RaptorQProcessor::new(ProcessorConfig {
             symbol_size: 1000,
             redundancy_factor: 10,
-            max_memory_mb: DEFAULT_MAX_MEMORY,
+            max_memory_mb: DEFAULT_MAX_MEMORY_MB,
             concurrency_limit: 4,
         });
         
@@ -2088,7 +2088,7 @@ mod tests {
     #[test]
     fn test_is_memory_available_logic() {
         let config = ProcessorConfig {
-            symbol_size: DEFAULT_SYMBOL_SIZE,
+            symbol_size: DEFAULT_SYMBOL_SIZE_B,
             redundancy_factor: DEFAULT_REDUNDANCY_FACTOR,
             max_memory_mb: 100,
             concurrency_limit: 4,

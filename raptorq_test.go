@@ -1,5 +1,8 @@
 package raptorq
 
+// To run `LD_LIBRARY_PATH="$(pwd)/target/debug" go test ./... "$@"`
+
+
 import (
 	"bytes"
 	"crypto/sha256"
@@ -265,7 +268,7 @@ func testEncodeDecodeFile(t *testing.T, processor *RaptorQProcessor, fileSizeByt
 }
 
 // System test for encoding/decoding a small file (1KB)
-func TestSysEncodeDecodeSmallFile(t *testing.T) {
+func TestSysEncodeDecode1KB(t *testing.T) {
 	// Create RaptorQ processor with default settings
 	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
@@ -285,7 +288,7 @@ func TestSysEncodeDecodeSmallFile(t *testing.T) {
 }
 
 // System test for encoding/decoding a medium file (10MB)
-func TestSysEncodeMediumFile(t *testing.T) {
+func TestSysEncode10MB(t *testing.T) {
 	// Create RaptorQ processor with default settings
 	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
@@ -305,7 +308,7 @@ func TestSysEncodeMediumFile(t *testing.T) {
 }
 
 // System test for encoding/decoding a large file with auto-splitting (100MB)
-func TestSysEncodeLargeFileAutoChunk(t *testing.T) {
+func TestSysEncode100MB(t *testing.T) {
 	// Create RaptorQ processor with small memory limit to force auto-splitting
 	processor, err := NewRaptorQProcessor(DefaultSymbolSize, DefaultRedundancyFactor, MaxMemoryMB_4GB, DefaultConcurrencyLimit)
 	if err != nil {
@@ -325,7 +328,7 @@ func TestSysEncodeLargeFileAutoChunk(t *testing.T) {
 }
 
 // System test for encoding/decoding a large file with manual splitting (100MB)
-func TestSysEncodeLargeFileManualChunk(t *testing.T) {
+func TestSysEncode100MBManualBlock(t *testing.T) {
 	// Create RaptorQ processor with default settings
 	processor, err := NewDefaultRaptorQProcessor()
 	if err != nil {
@@ -347,7 +350,7 @@ func TestSysEncodeLargeFileManualChunk(t *testing.T) {
 
 // System test for encoding/decoding a very large file (1GB)
 // This test is skipped by default due to resource requirements
-func TestSysEncodeVeryLargeFile(t *testing.T) {
+func TestSysEncode1GB(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping very large file test in short mode")
 	}
@@ -364,8 +367,7 @@ func TestSysEncodeVeryLargeFile(t *testing.T) {
 	}()
 
 	fileSize := 1024 * 1024 * 1024 // 1GB
-	blockSize := 50 * 1024 * 1024  // 50MB blocks
-	result := testEncodeDecodeFile(t, processor, fileSize, blockSize)
+	result := testEncodeDecodeFile(t, processor, fileSize, 0)
 	if !result {
 		t.Fatal("Decoded file does not match original")
 	}

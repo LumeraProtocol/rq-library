@@ -1,7 +1,7 @@
 package raptorq
 
 /*
-#cgo LDFLAGS: -L${SRCDIR}/target/debug -lrq_library -lm
+#cgo LDFLAGS: -L${SRCDIR}/target/release -lrq_library -lm
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
