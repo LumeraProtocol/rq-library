@@ -233,36 +233,37 @@ pub extern "C" fn raptorq_decode_symbols(
 ) -> i32 {
     // Basic null pointer checks
     if symbols_dir.is_null() || output_path.is_null() || layout_path.is_null() {
-        return -1;
+        return -2;
     }
 
     let symbols_dir_str = match unsafe { CStr::from_ptr(symbols_dir) }.to_str() {
         Ok(s) => s,
-        Err(_) => return -10,
+        Err(_) => return -2,
     };
 
     let output_path_str = match unsafe { CStr::from_ptr(output_path) }.to_str() {
         Ok(s) => s,
-        Err(_) => return -11,
+        Err(_) => return -2,
     };
 
     let layout_path_str = match unsafe { CStr::from_ptr(layout_path) }.to_str() {
         Ok(s) => s,
-        Err(_) => return -12,
+        Err(_) => return -2,
     };
 
     let processors = PROCESSORS.lock();
     let processor = match processors.get(&session_id) {
         Some(p) => p,
-        None => return -4,
+        None => return -5,
     };
 
     match processor.decode_symbols(symbols_dir_str, output_path_str, layout_path_str) {
         Ok(_) => 0,
         Err(e) => match e {
-            ProcessError::FileNotFound(_) => -2,
-            ProcessError::DecodingFailed(_) => -3,
-            _ => -1,
+            ProcessError::IOError(_) => -11,
+            ProcessError::FileNotFound(_) => -12,
+            ProcessError::DecodingFailed(_) => -14,
+            _ => -1, // Generic error for unhandled cases
         },
     }
 }
@@ -438,7 +439,7 @@ mod ffi_tests {
                     result_buffer.as_mut_ptr() as *mut c_char,
                     result_buffer.len(),
                 );
-            assert_eq!(result, -1, "Null input_path should return -1");
+            assert_eq!(result, -2, "Null input_path should return -2");
             
             // Test with null output_dir
             let result = raptorq_encode_file(
@@ -449,7 +450,7 @@ mod ffi_tests {
                     result_buffer.as_mut_ptr() as *mut c_char,
                     result_buffer.len(),
                 );
-            assert_eq!(result, -1, "Null output_dir should return -1");
+            assert_eq!(result, -2, "Null output_dir should return -2");
             
             // Test with null result_buffer
             let result = raptorq_encode_file(
@@ -460,7 +461,7 @@ mod ffi_tests {
                     ptr::null_mut(),
                     1024,
                 );
-            assert_eq!(result, -1, "Null result_buffer should return -1");
+            assert_eq!(result, -2, "Null result_buffer should return -2");
             
             // Clean up
             raptorq_free_session(session_id);
@@ -480,7 +481,7 @@ mod ffi_tests {
                     result_buffer.len(),
                 );
             
-            assert_eq!(result, -4, "Invalid session ID should return -4");
+            assert_eq!(result, -5, "Invalid session ID should return -5");
         }
     
         #[test]
@@ -543,7 +544,7 @@ mod ffi_tests {
                 result_buffer.len(),
             );
             
-            assert_eq!(result, -2, "File not found should return -2");
+            assert_eq!(result, -12, "File not found should return -12");
             
             // Check error message
             let mut error_buffer = [0u8; 1024];
@@ -634,7 +635,7 @@ mod ffi_tests {
                 result_buffer.len(),
             );
             
-            assert_eq!(result, -5, "Result buffer too small should return -5");
+            assert_eq!(result, -4, "Result buffer too small should return -4");
             
             // Clean up
             raptorq_free_session(session_id);
@@ -815,7 +816,7 @@ mod ffi_tests {
                 CString::new("output.txt").unwrap().as_ptr(),
                 CString::new("layout.json").unwrap().as_ptr(),
             );
-            assert_eq!(result, -1, "Null symbols_dir should return -1");
+            assert_eq!(result, -2, "Null symbols_dir should return -2");
             
             // Test with null output_path
             let result = raptorq_decode_symbols(
@@ -824,7 +825,7 @@ mod ffi_tests {
                 ptr::null(),
                 CString::new("layout.json").unwrap().as_ptr(),
             );
-            assert_eq!(result, -1, "Null output_path should return -1");
+            assert_eq!(result, -2, "Null output_path should return -2");
             
             // Test with null layout_path
             let result = raptorq_decode_symbols(
@@ -833,7 +834,7 @@ mod ffi_tests {
                 CString::new("output.txt").unwrap().as_ptr(),
                 ptr::null(),
             );
-            assert_eq!(result, -1, "Null layout_path should return -1");
+            assert_eq!(result, -2, "Null layout_path should return -2");
             
             // Clean up
             raptorq_free_session(session_id);
@@ -850,7 +851,7 @@ mod ffi_tests {
                 CString::new("layout.json").unwrap().as_ptr(),
             );
             
-            assert_eq!(result, -4, "Invalid session ID should return -4");
+            assert_eq!(result, -5, "Invalid session ID should return -5");
         }
     
         #[test]
@@ -871,7 +872,7 @@ mod ffi_tests {
             );
             
             // Should return -2 for file not found or -3 for decoding failed
-            assert!(result == -2 || result == -3, "Layout file not found should return -2 or -3");
+            assert!(result == -12, "Layout file not found should return -12");
             
             // Clean up
             raptorq_free_session(session_id);
@@ -958,7 +959,7 @@ mod ffi_tests {
                 CString::new(layout_path.to_string_lossy().as_ref()).unwrap().as_ptr(),
             );
             
-            assert_eq!(result, -2, "File not found should return -2");
+            assert_eq!(result, -12, "File not found should return -12");
             
             // Check error message
             let mut error_buffer = [0u8; 1024];

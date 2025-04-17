@@ -152,7 +152,7 @@ func (p *RaptorQProcessor) EncodeFile(inputPath, outputDir string, blockSize int
 	defer C.free(unsafe.Pointer(cOutputDir))
 
 	// Buffer for result (4KB should be enough for metadata)
-	resultBufSize := 16*1024//4096
+	resultBufSize := 16 * 1024 //4096
 	resultBuf := (*C.char)(C.malloc(C.size_t(resultBufSize)))
 	defer C.free(unsafe.Pointer(resultBuf))
 
@@ -169,15 +169,25 @@ func (p *RaptorQProcessor) EncodeFile(inputPath, outputDir string, blockSize int
 	case 0:
 		// Success
 	case -1:
-		return nil, fmt.Errorf("generic error: %s", p.getLastError())
+		return nil, fmt.Errorf("generic error")
 	case -2:
-		return nil, fmt.Errorf("file not found: %s", p.getLastError())
+		return nil, fmt.Errorf("invalid parameters")
 	case -3:
-		return nil, fmt.Errorf("encoding failed: %s", p.getLastError())
+		return nil, fmt.Errorf("invalid response (JSON serialization error)")
 	case -4:
-		return nil, fmt.Errorf("invalid session")
+		return nil, fmt.Errorf("result buffer too small")
 	case -5:
-		return nil, fmt.Errorf("memory allocation error %s", p.getLastError())
+		return nil, fmt.Errorf("invalid session")
+	case -11:
+		return nil, fmt.Errorf("IO error: %s", p.getLastError())
+	case -12:
+		return nil, fmt.Errorf("file not found: %s", p.getLastError())
+	case -13:
+		return nil, fmt.Errorf("encoding failed: %s", p.getLastError())
+	case -15:
+		return nil, fmt.Errorf("memory limit exceeded: %s", p.getLastError())
+	case -16:
+		return nil, fmt.Errorf("concurrency limit reached: %s", p.getLastError())
 	default:
 		return nil, fmt.Errorf("unknown error code %d: %s", res, p.getLastError())
 	}
@@ -223,13 +233,25 @@ func (p *RaptorQProcessor) DecodeSymbols(symbolsDir, outputPath, layoutPath stri
 	case 0:
 		return nil
 	case -1:
-		return fmt.Errorf("generic error: %s", p.getLastError())
+		return fmt.Errorf("generic error")
 	case -2:
-		return fmt.Errorf("file not found: %s", p.getLastError())
+		return fmt.Errorf("invalid parameters")
 	case -3:
-		return fmt.Errorf("decoding failed: %s", p.getLastError())
+		return fmt.Errorf("invalid response") // Assuming similar meaning as encode
 	case -4:
+		return fmt.Errorf("bad return buffer size") // Assuming similar meaning as encode
+	case -5:
 		return fmt.Errorf("invalid session")
+	case -11:
+		return fmt.Errorf("IO error: %s", p.getLastError())
+	case -12:
+		return fmt.Errorf("file not found: %s", p.getLastError())
+	case -14:
+		return fmt.Errorf("decoding failed: %s", p.getLastError())
+	case -15:
+		return fmt.Errorf("memory limit exceeded: %s", p.getLastError())
+	case -16:
+		return fmt.Errorf("concurrency limit reached: %s", p.getLastError())
 	default:
 		return fmt.Errorf("unknown error code %d: %s", res, p.getLastError())
 	}
