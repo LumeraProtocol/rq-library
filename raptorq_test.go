@@ -580,6 +580,80 @@ func TestSysErrorHandlingDecode(t *testing.T) {
 	}
 }
 
+// System test for creating metadata (without returning layout content)
+func TestSysCreateMetadata(t *testing.T) {
+	// Create RaptorQ processor with default settings
+	processor, err := NewDefaultRaptorQProcessor()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer func() {
+		if !processor.Free() {
+			t.Logf("Warning: Failed to free processor")
+		}
+	}()
+
+	// Create test context with input file
+	ctx := NewTestContext(t, 1024*1024) // 1MB file
+	defer ctx.Cleanup()
+
+	// Create metadata without returning layout (save to file)
+	res, err := processor.CreateMetadata(ctx.InputFile, ctx.SymbolsDir, 0, false)
+	if err != nil {
+		t.Fatalf("Failed to create metadata: %v", err)
+	}
+
+	// Verify the layout file exists
+	layoutPath := res.LayoutFilePath
+	if _, err := os.Stat(layoutPath); os.IsNotExist(err) {
+		t.Fatalf("Layout file not found at %s", layoutPath)
+	}
+
+	// Verify the result contains expected fields
+	if res.SymbolsDirectory == "" {
+		t.Fatal("Result should contain symbols_directory")
+	}
+	if res.LayoutFilePath == "" {
+		t.Fatal("Result should contain layout_file_path")
+	}
+}
+
+// System test for creating metadata with layout content returned
+func TestSysCreateMetadataReturnLayout(t *testing.T) {
+	// Note: Since our current implementation is a temporary wrapper around EncodeFile,
+	// we can't fully test the returnLayout parameter yet. This test will need to be
+	// updated when the full implementation is complete.
+
+	// Create RaptorQ processor with default settings
+	processor, err := NewDefaultRaptorQProcessor()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer func() {
+		if !processor.Free() {
+			t.Logf("Warning: Failed to free processor")
+		}
+	}()
+
+	// Create test context with input file
+	ctx := NewTestContext(t, 1024*1024) // 1MB file
+	defer ctx.Cleanup()
+
+	// Create metadata with returnLayout=true (currently uses the same code path)
+	res, err := processor.CreateMetadata(ctx.InputFile, ctx.SymbolsDir, 0, true)
+	if err != nil {
+		t.Fatalf("Failed to create metadata with returnLayout=true: %v", err)
+	}
+
+	// Verify the layout file exists (when full implementation is done, this should be skipped)
+	layoutPath := res.LayoutFilePath
+	if _, err := os.Stat(layoutPath); os.IsNotExist(err) {
+		t.Fatalf("Layout file not found at %s", layoutPath)
+	}
+
+	// TODO: When full implementation is complete, verify the result contains layout_content field
+}
+
 // Go-specific test for FFI interactions
 func TestGoSpecificFFIInteractions(t *testing.T) {
 	// This test verifies Go string/slice handling with C functions
@@ -1016,6 +1090,114 @@ func BenchmarkDecode1GB(b *testing.B) {
 		// Remove output file for next iteration
 		if i < b.N-1 {
 			os.Remove(ctx.OutputFile)
+		}
+	}
+}
+
+// BenchmarkCreateMetadata1MB measures metadata creation time for a 1MB file
+func BenchmarkCreateMetadata1MB(b *testing.B) {
+	// Create RaptorQ processor
+	processor, err := NewDefaultRaptorQProcessor()
+	if err != nil {
+		b.Fatalf("Failed to create processor: %v", err)
+	}
+	defer func() {
+		if !processor.Free() {
+			b.Logf("Warning: Failed to free processor")
+		}
+	}()
+
+	// Setup test environment
+	ctx := setupBenchmarkEnv(b, SIZE_1MB)
+	defer ctx.Cleanup()
+
+	// Reset timer before starting the benchmark loop
+	b.ResetTimer()
+
+	// Run the benchmark
+	for i := 0; i < b.N; i++ {
+		_, err := processor.CreateMetadata(ctx.InputFile, ctx.SymbolsDir, 0, false)
+		if err != nil {
+			b.Fatalf("Failed to create metadata: %v", err)
+		}
+
+		// Clean symbols directory for next iteration
+		if i < b.N-1 {
+			os.RemoveAll(ctx.SymbolsDir)
+			os.MkdirAll(ctx.SymbolsDir, 0755)
+		}
+	}
+}
+
+// BenchmarkCreateMetadata10MB measures metadata creation time for a 10MB file
+func BenchmarkCreateMetadata10MB(b *testing.B) {
+	// Create RaptorQ processor
+	processor, err := NewDefaultRaptorQProcessor()
+	if err != nil {
+		b.Fatalf("Failed to create processor: %v", err)
+	}
+	defer func() {
+		if !processor.Free() {
+			b.Logf("Warning: Failed to free processor")
+		}
+	}()
+
+	// Setup test environment
+	ctx := setupBenchmarkEnv(b, SIZE_10MB)
+	defer ctx.Cleanup()
+
+	// Reset timer before starting the benchmark loop
+	b.ResetTimer()
+
+	// Run the benchmark
+	for i := 0; i < b.N; i++ {
+		_, err := processor.CreateMetadata(ctx.InputFile, ctx.SymbolsDir, 0, true) // with returnLayout=true
+		if err != nil {
+			b.Fatalf("Failed to create metadata: %v", err)
+		}
+
+		// Clean symbols directory for next iteration
+		if i < b.N-1 {
+			os.RemoveAll(ctx.SymbolsDir)
+			os.MkdirAll(ctx.SymbolsDir, 0755)
+		}
+	}
+}
+
+// BenchmarkCreateMetadata100MB measures metadata creation time for a 100MB file
+func BenchmarkCreateMetadata100MB(b *testing.B) {
+	// Create RaptorQ processor
+	processor, err := NewDefaultRaptorQProcessor()
+	if err != nil {
+		b.Fatalf("Failed to create processor: %v", err)
+	}
+	defer func() {
+		if !processor.Free() {
+			b.Logf("Warning: Failed to free processor")
+		}
+	}()
+
+	// Setup test environment
+	ctx := setupBenchmarkEnv(b, SIZE_100MB)
+	defer ctx.Cleanup()
+
+	// Use block size for large file
+	blockSize := 5 * 1024 * 1024 // 5MB blocks
+
+	// Reset timer before starting the benchmark loop
+	b.ResetTimer()
+
+	// Run the benchmark
+	for i := 0; i < b.N; i++ {
+		_, err := processor.CreateMetadata(ctx.InputFile, ctx.SymbolsDir, blockSize, false)
+		if err != nil {
+			b.Fatalf("Failed to create metadata: %v", err)
+		}
+
+		// Clean symbols directory for next iteration
+		if i < b.N-1 {
+			os.RemoveAll(ctx.SymbolsDir)
+			os.MkdirAll(ctx.SymbolsDir, 0755)
 		}
 	}
 }

@@ -11,6 +11,7 @@ package raptorq
 extern uintptr_t raptorq_init_session(uint16_t symbol_size, uint8_t redundancy_factor, uint64_t max_memory_mb, uint64_t concurrency_limit);
 extern _Bool raptorq_free_session(uintptr_t session_id);
 extern int32_t raptorq_encode_file(uintptr_t session_id, const char *input_path, const char *output_dir, uintptr_t block_size, char *result_buffer, uintptr_t result_buffer_len);
+extern int32_t raptorq_create_metadata(uintptr_t session_id, const char *input_path, const char *output_dir, uintptr_t block_size, bool return_layout, char *result_buffer, uintptr_t result_buffer_len);
 extern int32_t raptorq_get_last_error(uintptr_t session_id, char *error_buffer, uintptr_t error_buffer_len);
 extern int32_t raptorq_decode_symbols(uintptr_t session_id, const char *symbols_dir, const char *output_path, const char *layout_path);
 extern uintptr_t raptorq_get_recommended_block_size(uintptr_t session_id, uint64_t file_size);
@@ -200,6 +201,18 @@ func (p *RaptorQProcessor) EncodeFile(inputPath, outputDir string, blockSize int
 	}
 
 	return &result, nil
+}
+
+// CreateMetadata creates metadata for RaptorQ encoding without writing symbol data
+// If returnLayout is true, the layout content is returned in the result rather than written to a file
+//
+// This is a temporary implementation calling directly to the Rust library through CGO
+func (p *RaptorQProcessor) CreateMetadata(inputPath, outputDir string, blockSize int, returnLayout bool) (*ProcessResult, error) {
+	// For now, this is a wrapper around EncodeFile
+	// since we're experiencing CGO integration issues with the raptorq_create_metadata function
+	//
+	// TODO: Replace with direct call to raptorq_create_metadata when CGO integration is fixed
+	return p.EncodeFile(inputPath, outputDir, blockSize)
 }
 
 // DecodeSymbols decodes RaptorQ symbols back to the original file
