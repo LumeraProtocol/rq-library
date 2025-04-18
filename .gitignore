@@ -1,2 +1,13 @@
 /target
 /.idea
+.roomodes
+.roo/system-prompt-architect
+.roo/system-prompt-ask
+.roo/system-prompt-code
+.roo/system-prompt-debug
+.roo/system-prompt-test
+memory-bank/activeContext.md
+memory-bank/decisionLog.md
+memory-bank/productContext.md
+memory-bank/progress.md
+memory-bank/systemPatterns.md

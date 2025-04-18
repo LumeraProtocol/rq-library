@@ -58,6 +58,39 @@ bool raptorq_free_session(uintptr_t session_id);
  * * -15 on Memory limit exceeded
  * * -16 on Concurrency limit reached
  */
+int32_t raptorq_create_metadata(uintptr_t session_id,
+                                const char *input_path,
+                                const char *output_dir,
+                                uintptr_t block_size,
+                                bool return_layout,
+                                char *result_buffer,
+                                uintptr_t result_buffer_len);
+
+/**
+ * Encodes a file using RaptorQ - streaming implementation
+ *
+ * Arguments:
+ * * `session_id` - Session ID returned from raptorq_init_session
+ * * `input_path` - Path to the input file
+ * * `output_dir` - Directory where symbols will be written
+ * * `block_size` - Size of blocks to process at once (0 = auto)
+ * * `result_buffer` - Buffer to store the result (JSON metadata)
+ * * `result_buffer_len` - Length of the result buffer
+ *
+ * Returns:
+ * *   0 on success
+ * *  -1 on generic error
+ * *  -2 on invalid parameters
+ * *  -3 on invalid response
+ * *  -4 on bad return buffer size
+ * *  -4 on encoding failure
+ * *  -5 on invalid session
+ * * -11 on IO error
+ * * -12 on File not found
+ * * -13 on Encoding failed
+ * * -15 on Memory limit exceeded
+ * * -16 on Concurrency limit reached
+ */
 int32_t raptorq_encode_file(uintptr_t session_id,
                             const char *input_path,
                             const char *output_dir,

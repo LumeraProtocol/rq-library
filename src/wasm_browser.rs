@@ -49,6 +49,69 @@ mod wasm_browser {
 
         // Encode a file
         #[wasm_bindgen]
+        // Create metadata (layout) without generating symbols
+        #[wasm_bindgen]
+        pub fn create_metadata(&self, input_path: String, output_dir: String, block_size: usize, return_layout: bool) -> Promise {
+            let processor = self.processor.clone();
+
+            future_to_promise(async move {
+                // Create output directory
+                browser::create_dir_all_async(&output_dir).await?;
+
+                // Get file size
+                let file_size = browser::file_size_async(&input_path).await?;
+
+                // Calculate actual block size
+                let actual_block_size = if block_size == 0 {
+                    processor.get_recommended_block_size(file_size)
+                } else {
+                    block_size
+                };
+
+                // Call the new create_metadata method
+                let result = processor.create_metadata(&input_path, &output_dir, actual_block_size, return_layout)?;
+
+                // Convert result to JS object
+                let js_result = Object::new();
+
+                // Extract encoder parameters from the first block if available
+                let encoder_params = if let Some(blocks) = &result.blocks {
+                    if let Some(first_block) = blocks.first() {
+                        let params_array = Uint8Array::new_with_length(first_block.encoder_parameters.len() as u32);
+                        params_array.copy_from(&first_block.encoder_parameters);
+                        params_array
+                    } else {
+                        Uint8Array::new_with_length(0)
+                    }
+                } else {
+                    Uint8Array::new_with_length(0)
+                };
+
+                // Set properties
+                js_sys::Reflect::set(&js_result, &JsValue::from_str("encoderParameters"), &encoder_params)?;
+                js_sys::Reflect::set(&js_result, &JsValue::from_str("totalSymbolsCount"), &JsValue::from_f64(result.total_symbols_count as f64))?;
+                js_sys::Reflect::set(&js_result, &JsValue::from_str("totalRepairSymbols"), &JsValue::from_f64(result.total_repair_symbols as f64))?;
+                js_sys::Reflect::set(&js_result, &JsValue::from_str("symbolsDirectory"), &JsValue::from_str(&result.symbols_directory))?;
+                js_sys::Reflect::set(&js_result, &JsValue::from_str("layoutFilePath"), &JsValue::from_str(&result.layout_file_path))?;
+
+                // Add layout content if returning it directly
+                if let Some(layout_content) = result.layout_content {
+                    js_sys::Reflect::set(&js_result, &JsValue::from_str("layoutContent"), &JsValue::from_str(&layout_content))?;
+                }
+
+                if let Some(blocks) = &result.blocks {
+                    let js_blocks = to_value(&blocks)?;
+                    js_sys::Reflect::set(&js_result, &JsValue::from_str("blocks"), &js_blocks)?;
+                } else {
+                    js_sys::Reflect::set(&js_result, &JsValue::from_str("blocks"), &JsValue::null())?;
+                }
+
+                Ok(js_result.into())
+            })
+        }
+
+        // Encode a file
+        #[wasm_bindgen]
         pub fn encode_file(&self, input_path: String, output_dir: String, block_size: usize) -> Promise {
             let processor = self.processor.clone();
 

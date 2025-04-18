@@ -83,6 +83,9 @@ pub struct ProcessResult {
     pub symbols_directory: String,
     pub blocks: Option<Vec<BlockInfo>>,
     pub layout_file_path: String,
+    /// The layout file content, only populated when return_layout is true
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout_content: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -205,6 +208,50 @@ impl RaptorQProcessor {
         (blocks * symbol_size) as usize
     }
 
+    /// Create metadata for a file without generating symbols
+    ///
+    /// This method calculates symbol IDs and creates a layout file without
+    /// actually writing the symbol files to disk.
+    ///
+    /// # Arguments
+    ///
+    /// * `input_path` - Path to the input file
+    /// * `output_dir` - Directory where the layout file will be written
+    /// * `block_size` - Size of blocks to process at once (0 = auto)
+    /// * `return_layout` - Whether to return the layout as an object instead of writing to file
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(ProcessResult)` with the layout information
+    /// * `Err(ProcessError)` on failure
+    pub fn create_metadata(
+        &self,
+        input_path: &str,
+        output_dir: &str,
+        block_size: usize,
+        return_layout: bool,
+    ) -> Result<ProcessResult, ProcessError> {
+        // Prepare for processing
+        let (input_path, file_size, actual_block_size) = self.prepare_processing(
+            input_path,
+            block_size,
+            false, // We don't force single file for metadata creation
+        )?;
+        
+        debug!("Creating metadata for file: {:?} ({}B) with block size {}B",
+               input_path, file_size, actual_block_size);
+                
+        // Process file blocks but with metadata_only flag set to true
+        self.process_file_blocks(
+            &input_path,
+            output_dir,
+            actual_block_size,
+            true, // metadata_only = true
+            return_layout,
+        )
+    }
+
+    /// Encode a file using RaptorQ
     pub fn encode_file(
         &self,
         input_path: &str,
@@ -212,6 +259,35 @@ impl RaptorQProcessor {
         block_size: usize,
         force_single_file: bool,
     ) -> Result<ProcessResult, ProcessError> {
+        // Prepare for processing
+        let (input_path, file_size, actual_block_size) = self.prepare_processing(
+            input_path,
+            block_size,
+            force_single_file,
+        )?;
+        
+        debug!("Processing file: {:?} ({}B) with block size {}B",
+               input_path, file_size, actual_block_size);
+                
+        // Process file blocks - create actual symbols
+        self.process_file_blocks(
+            &input_path,
+            output_dir,
+            actual_block_size,
+            false, // metadata_only = false
+            false, // return_layout = false
+        )
+    }
+
+    /// Prepare file for processing
+    ///
+    /// This helper method handles common setup for encode_file and create_metadata
+    fn prepare_processing(
+        &self,
+        input_path: &str,
+        block_size: usize,
+        force_single_file: bool,
+    ) -> Result<(std::path::PathBuf, u64, usize), ProcessError> {
         // Check if we can take another task
         if !self.can_start_task() {
             return Err(ProcessError::ConcurrencyLimitReached);
@@ -219,7 +295,7 @@ impl RaptorQProcessor {
 
         let _guard = TaskGuard::new(&self.active_tasks);
 
-        let input_path = Path::new(input_path);
+        let input_path = Path::new(input_path).to_path_buf();
         if !input_path.exists() {
             let err = format!("Input file not found: {:?}", input_path);
             self.set_last_error(err.clone());
@@ -256,17 +332,19 @@ impl RaptorQProcessor {
             block_size
         };
 
-        debug!("Processing file: {:?} ({}B) with block size {}B",
-               input_path, file_size, actual_block_size);
-
-        self.encode_file_blocks(input_path, output_dir, actual_block_size)
+        Ok((input_path, file_size, actual_block_size))
     }
 
-    fn encode_file_blocks(
+    /// Process file blocks for encoding or metadata creation
+    ///
+    /// This method handles both creating actual symbols or just generating metadata
+    fn process_file_blocks(
         &self,
         input_path: &Path,
         output_dir: &str,
         block_size: usize,
+        metadata_only: bool,
+        return_layout: bool,
     ) -> Result<ProcessResult, ProcessError> {
         // Ensure output directory exists
         let base_output_path = Path::new(output_dir);
@@ -314,6 +392,7 @@ impl RaptorQProcessor {
                 actual_block_size,
                 repair_symbols,
                 &block_dir,
+                metadata_only,
             )?;
 
             // Add to BlockInfo for ProcessResult
@@ -348,8 +427,7 @@ impl RaptorQProcessor {
             blocks: block_layouts,
         };
 
-        // Save layout information to output directory
-        let layout_path = base_output_path.join(LAYOUT_FILENAME);
+        // Generate the layout JSON
         let layout_json = match serde_json::to_string_pretty(&layout) {
             Ok(json) => json,
             Err(e) => {
@@ -359,30 +437,52 @@ impl RaptorQProcessor {
             }
         };
 
-        let mut layout_file = match File::create(&layout_path) {
-            Ok(file) => file,
-            Err(e) => {
-                let err = format!("Failed to create layout file: {}", e);
+        // If return_layout is true, we don't write to file but include in result
+        let layout_path_str;
+        let layout_path;
+        
+        if !return_layout {
+            // Save layout information to output directory
+            layout_path = base_output_path.join(LAYOUT_FILENAME);
+            layout_path_str = layout_path.to_string_lossy().to_string();
+            
+            let mut layout_file = match File::create(&layout_path) {
+                Ok(file) => file,
+                Err(e) => {
+                    let err = format!("Failed to create layout file: {}", e);
+                    self.set_last_error(err.clone());
+                    return Err(ProcessError::IOError(e));
+                }
+            };
+
+            if let Err(e) = layout_file.write_all(layout_json.as_bytes()) {
+                let err = format!("Failed to write layout file: {}", e);
                 self.set_last_error(err.clone());
                 return Err(ProcessError::IOError(e));
             }
-        };
 
-        if let Err(e) = layout_file.write_all(layout_json.as_bytes()) {
-            let err = format!("Failed to write layout file: {}", e);
-            self.set_last_error(err.clone());
-            return Err(ProcessError::IOError(e));
+            debug!("Saved layout file at {:?}", layout_path);
+        } else {
+            // For browser environments that can't write files, we use a virtual path
+            layout_path_str = format!("{}/{}", output_dir, LAYOUT_FILENAME);
+            debug!("Layout file (virtual): {}", layout_path_str);
         }
 
-        debug!("Saved layout file for at {:?}", layout_path);
-
-        Ok(ProcessResult {
+        let mut result = ProcessResult {
             total_symbols_count,
             total_repair_symbols,
             symbols_directory: output_dir.to_string(),
             blocks: Some(blocks),
-            layout_file_path: layout_path.to_string_lossy().to_string(),
-        })
+            layout_file_path: layout_path_str,
+            layout_content: None,
+        };
+        
+        // If we're returning the layout directly, include it in the result
+        if return_layout {
+            result.layout_content = Some(layout_json);
+        }
+        
+        Ok(result)
     }
 
     fn encode_stream<R: Read>(
@@ -391,6 +491,7 @@ impl RaptorQProcessor {
         data_size: u64,
         repair_symbols: u64,
         output_path: &Path,
+        metadata_only: bool,
     ) -> Result<(Vec<u8>, Vec<String>, String), ProcessError> {
         // Calculate buffer size - aim for processing in 16 pieces or DEFAULT_STREAM_BUFFER_SIZE,
         // whichever is larger
@@ -435,16 +536,19 @@ impl RaptorQProcessor {
         let encoder = Encoder::new(&data, config);
         let symbols = encoder.get_encoded_packets(repair_symbols as u32);
 
-        // Write symbols to disk
+        // Generate symbol ids (and write symbols to disk if not metadata_only)
         let mut symbol_ids = Vec::with_capacity(symbols.len());
 
         for symbol in &symbols {
             let packet = symbol.serialize();
             let symbol_id = self.calculate_symbol_id(&packet);
-            let output_file_path = output_path.join(&symbol_id);
-
-            let mut file = BufWriter::new(File::create(&output_file_path)?);
-            file.write_all(&packet)?;
+            
+            // Only write the symbols to disk if we're not in metadata_only mode
+            if !metadata_only {
+                let output_file_path = output_path.join(&symbol_id);
+                let mut file = BufWriter::new(File::create(&output_file_path)?);
+                file.write_all(&packet)?;
+            }
 
             symbol_ids.push(symbol_id);
         }
@@ -2264,5 +2368,94 @@ mod tests {
         
         // Ensure temp_dir isn't dropped early
         drop(temp_dir);
+    }
+
+    #[test]
+    fn test_create_metadata_without_saving_symbols() {
+        // Create test environment
+        let (temp_dir, temp_path) = create_temp_dir();
+        let input_file_path = temp_path.join("input.txt");
+        let output_dir_path = temp_path.join("output");
+        
+        // Create test input file
+        let test_data = generate_test_data(5000);
+        let mut file = File::create(&input_file_path).unwrap();
+        file.write_all(&test_data).unwrap();
+        
+        // Create processor
+        let processor = RaptorQProcessor::new(ProcessorConfig::default());
+        
+        // Create metadata without writing symbols
+        let result = processor.create_metadata(
+            input_file_path.to_str().unwrap(),
+            output_dir_path.to_str().unwrap(),
+            0, // auto block size
+            false, // write layout file
+        ).unwrap();
+        
+        // Verify layout file exists
+        let layout_file_path = Path::new(&result.layout_file_path);
+        assert!(layout_file_path.exists());
+        
+        // Read and parse layout file
+        let layout_content = fs::read_to_string(layout_file_path).unwrap();
+        let layout: RaptorQLayout = serde_json::from_str(&layout_content).unwrap();
+        
+        // Verify layout contains expected data
+        assert!(!layout.blocks.is_empty());
+        assert!(!layout.blocks[0].symbols.is_empty());
+        
+        // Verify symbols were NOT created
+        let symbol_id = &layout.blocks[0].symbols[0];
+        let block_dir = output_dir_path.join(format!("block_{}", layout.blocks[0].block_id));
+        let symbol_path = block_dir.join(symbol_id);
+        assert!(!symbol_path.exists(), "Symbol file should not exist");
+        
+        // Ensure temp_dir isn't dropped early
+        drop(temp_dir);
+    }
+    
+    #[test]
+    fn test_create_metadata_return_layout() {
+        // Create test environment
+        let (_temp_dir, temp_path) = create_temp_dir();
+        let input_file_path = temp_path.join("input.txt");
+        let output_dir_path = temp_path.join("output");
+        
+        // Create test input file
+        let test_data = generate_test_data(5000);
+        let mut file = File::create(&input_file_path).unwrap();
+        file.write_all(&test_data).unwrap();
+        
+        // Create processor
+        let processor = RaptorQProcessor::new(ProcessorConfig::default());
+        
+        // Create metadata and return layout content
+        let result = processor.create_metadata(
+            input_file_path.to_str().unwrap(),
+            output_dir_path.to_str().unwrap(),
+            0, // auto block size
+            true, // return layout content
+        ).unwrap();
+        
+        // Verify layout content is returned
+        assert!(result.layout_content.is_some());
+        
+        // Parse layout content
+        let layout: RaptorQLayout = serde_json::from_str(&result.layout_content.unwrap()).unwrap();
+        
+        // Verify layout contains expected data
+        assert!(!layout.blocks.is_empty());
+        assert!(!layout.blocks[0].symbols.is_empty());
+        
+        // Verify symbols were NOT created
+        let symbol_id = &layout.blocks[0].symbols[0];
+        let block_dir = output_dir_path.join(format!("block_{}", layout.blocks[0].block_id));
+        let symbol_path = block_dir.join(symbol_id);
+        assert!(!symbol_path.exists(), "Symbol file should not exist");
+        
+        // Verify layout file was not written to disk
+        let layout_file_path = Path::new(&result.layout_file_path);
+        assert!(!layout_file_path.exists(), "Layout file should not exist on disk when return_layout is true");
     }
 }

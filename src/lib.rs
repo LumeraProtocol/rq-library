@@ -78,6 +78,100 @@ pub extern "C" fn raptorq_free_session(session_id: usize) -> bool {
 /// * -15 on Memory limit exceeded
 /// * -16 on Concurrency limit reached
 #[unsafe(no_mangle)]
+pub extern "C" fn raptorq_create_metadata(
+    session_id: usize,
+    input_path: *const c_char,
+    output_dir: *const c_char,
+    block_size: usize,
+    return_layout: bool,
+    result_buffer: *mut c_char,
+    result_buffer_len: usize,
+) -> i32 {
+    // Basic null pointer checks
+    if input_path.is_null() || output_dir.is_null() || result_buffer.is_null() {
+        return -2;
+    }
+
+    let input_path_str = match unsafe { CStr::from_ptr(input_path) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return -2,
+    };
+
+    let output_dir_str = match unsafe { CStr::from_ptr(output_dir) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return -2,
+    };
+
+    let processors = PROCESSORS.lock();
+    let processor = match processors.get(&session_id) {
+        Some(p) => p,
+        None => return -5,
+    };
+
+    match processor.create_metadata(input_path_str, output_dir_str, block_size, return_layout) {
+        Ok(result) => {
+            // Serialize result to JSON
+            let result_json = match serde_json::to_string(&result) {
+                Ok(j) => j,
+                Err(_) => return -3,
+            };
+
+            // Copy result to result buffer
+            let c_result = match CString::new(result_json) {
+                Ok(s) => s,
+                Err(_) => return -3,
+            };
+
+            let result_bytes = c_result.as_bytes_with_nul();
+            if result_bytes.len() > result_buffer_len {
+                return -4;
+            }
+
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    result_bytes.as_ptr() as *const c_char,
+                    result_buffer,
+                    result_bytes.len(),
+                );
+            }
+
+            0
+        },
+        Err(e) => match e {
+            ProcessError::IOError(_) => -11,
+            ProcessError::FileNotFound(_) => -12,
+            ProcessError::EncodingFailed(_) => -13,
+            ProcessError::MemoryLimitExceeded { .. } => -15,
+            ProcessError::ConcurrencyLimitReached => -16,
+            _ => -1,
+        },
+    }
+}
+
+/// Encodes a file using RaptorQ - streaming implementation
+///
+/// Arguments:
+/// * `session_id` - Session ID returned from raptorq_init_session
+/// * `input_path` - Path to the input file
+/// * `output_dir` - Directory where symbols will be written
+/// * `block_size` - Size of blocks to process at once (0 = auto)
+/// * `result_buffer` - Buffer to store the result (JSON metadata)
+/// * `result_buffer_len` - Length of the result buffer
+///
+/// Returns:
+/// *   0 on success
+/// *  -1 on generic error
+/// *  -2 on invalid parameters
+/// *  -3 on invalid response
+/// *  -4 on bad return buffer size
+/// *  -4 on encoding failure
+/// *  -5 on invalid session
+/// * -11 on IO error
+/// * -12 on File not found
+/// * -13 on Encoding failed
+/// * -15 on Memory limit exceeded
+/// * -16 on Concurrency limit reached
+#[unsafe(no_mangle)]
 pub extern "C" fn raptorq_encode_file(
     session_id: usize,
     input_path: *const c_char,
@@ -1035,6 +1129,149 @@ mod ffi_tests {
             if result == -1 {
                 // Test successful - path conversion failed as expected
             }
+            
+            // Clean up
+            raptorq_free_session(session_id);
+        }
+        
+        // Tests for raptorq_create_metadata
+        #[test]
+        fn test_ffi_create_metadata_success() {
+            let session_id = init_test_session();
+            let temp_dir = tempdir().expect("Failed to create temp directory");
+            
+            // Create test input file
+            let input_path = create_temp_file(
+                temp_dir.path(),
+                "test_input.txt",
+                b"This is test content for metadata creation",
+            ).expect("Failed to create test input file");
+            
+            let output_dir = temp_dir.path().join("output");
+            fs::create_dir_all(&output_dir).expect("Failed to create output directory");
+            
+            let mut result_buffer = [0u8; 2048];
+            
+            let result = raptorq_create_metadata(
+                session_id,
+                CString::new(input_path.to_str().unwrap()).unwrap().as_ptr(),
+                CString::new(output_dir.to_str().unwrap()).unwrap().as_ptr(),
+                0,
+                false, // Don't return layout, write to file
+                result_buffer.as_mut_ptr() as *mut c_char,
+                result_buffer.len(),
+            );
+            
+            assert_eq!(result, 0, "Create metadata should succeed");
+            
+            // Verify the result buffer contains JSON
+            let result_str = buffer_as_string(result_buffer.as_ptr() as *const c_char, result_buffer.len());
+            assert!(result_str.contains("symbols_directory"), "Result should contain symbols_directory");
+            assert!(result_str.contains("layout_file_path"), "Result should contain layout_file_path");
+            
+            // Verify layout file was written
+            let layout_path = output_dir.join("_raptorq_layout.json");
+            assert!(layout_path.exists(), "Layout file should exist");
+            
+            // Clean up
+            raptorq_free_session(session_id);
+        }
+        
+        #[test]
+        fn test_ffi_create_metadata_return_layout() {
+            let session_id = init_test_session();
+            let temp_dir = tempdir().expect("Failed to create temp directory");
+            
+            // Create test input file
+            let input_path = create_temp_file(
+                temp_dir.path(),
+                "test_input.txt",
+                b"This is test content for metadata creation with layout return",
+            ).expect("Failed to create test input file");
+            
+            let output_dir = temp_dir.path().join("output");
+            fs::create_dir_all(&output_dir).expect("Failed to create output directory");
+            
+            let mut result_buffer = [0u8; 2048];
+            
+            let result = raptorq_create_metadata(
+                session_id,
+                CString::new(input_path.to_str().unwrap()).unwrap().as_ptr(),
+                CString::new(output_dir.to_str().unwrap()).unwrap().as_ptr(),
+                0,
+                true, // Return layout content instead of writing to file
+                result_buffer.as_mut_ptr() as *mut c_char,
+                result_buffer.len(),
+            );
+            
+            assert_eq!(result, 0, "Create metadata should succeed");
+            
+            // Verify the result buffer contains JSON with layout_content
+            let result_str = buffer_as_string(result_buffer.as_ptr() as *const c_char, result_buffer.len());
+            assert!(result_str.contains("layout_content"), "Result should contain layout_content");
+            
+            // Verify layout file was NOT written
+            let layout_path = output_dir.join("_raptorq_layout.json");
+            assert!(!layout_path.exists(), "Layout file should not exist when returning layout content");
+            
+            // Clean up
+            raptorq_free_session(session_id);
+        }
+        
+        #[test]
+        fn test_ffi_create_metadata_invalid_params() {
+            let session_id = init_test_session();
+            let temp_dir = tempdir().expect("Failed to create temp directory");
+            let mut result_buffer = [0u8; 2048];
+            
+            // Test null input path
+            let result = raptorq_create_metadata(
+                session_id,
+                ptr::null(),
+                CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
+                0,
+                false,
+                result_buffer.as_mut_ptr() as *mut c_char,
+                result_buffer.len(),
+            );
+            assert_eq!(result, -2, "Null input path should return -2");
+            
+            // Test null output dir
+            let result = raptorq_create_metadata(
+                session_id,
+                CString::new("input.txt").unwrap().as_ptr(),
+                ptr::null(),
+                0,
+                false,
+                result_buffer.as_mut_ptr() as *mut c_char,
+                result_buffer.len(),
+            );
+            assert_eq!(result, -2, "Null output dir should return -2");
+            
+            // Test null result buffer
+            let result = raptorq_create_metadata(
+                session_id,
+                CString::new("input.txt").unwrap().as_ptr(),
+                CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
+                0,
+                false,
+                ptr::null_mut(),
+                result_buffer.len(),
+            );
+            assert_eq!(result, -2, "Null result buffer should return -2");
+            
+            // Test invalid session ID
+            let invalid_session_id = 99999;
+            let result = raptorq_create_metadata(
+                invalid_session_id,
+                CString::new("input.txt").unwrap().as_ptr(),
+                CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
+                0,
+                false,
+                result_buffer.as_mut_ptr() as *mut c_char,
+                result_buffer.len(),
+            );
+            assert_eq!(result, -5, "Invalid session ID should return -5");
             
             // Clean up
             raptorq_free_session(session_id);
