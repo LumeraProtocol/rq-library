@@ -11,3 +11,19 @@ memory-bank/decisionLog.md
 memory-bank/productContext.md
 memory-bank/progress.md
 memory-bank/systemPatterns.md
+
+# Go specific ignores
+/bindings/go/vendor/
+*.exe
+*.test
+*.out
+*.so
+*.dylib
+*.dll
+*.a
+
+# Explicitly track bindings/lib directory
+!/bindings/lib/*.so
+!/bindings/lib/*.dylib
+!/bindings/lib/*.dll
+!/bindings/lib/*.a
