@@ -35,7 +35,7 @@
 use raptorq::{Decoder, Encoder, EncodingPacket, ObjectTransmissionInformation};
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read, Write, BufWriter, Seek, SeekFrom};
-use std::path::{Path};
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use parking_lot::Mutex;
 use thiserror::Error;

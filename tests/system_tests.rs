@@ -460,3 +460,184 @@ fn test_sys_error_handling_decode() {
         _ => panic!("Expected FileNotFound error"),
     }
 }
+
+/// Helper function to test metadata creation
+fn test_create_metadata(
+    file_size_bytes: usize,
+    processor: &RaptorQProcessor,
+    block_size: usize,
+    return_layout: bool
+) -> std::io::Result<bool> {
+    // Create test context with input file
+    let ctx = TestContext::new(file_size_bytes)?;
+    
+    // Create metadata without saving symbols
+    let result = processor.create_metadata(
+        &ctx.input_path(),
+        &ctx.symbols_path(),
+        block_size,
+        return_layout
+    ).expect("Failed to create metadata");
+    
+    // Verify layout file path is returned
+    assert!(!result.layout_file_path.is_empty(), "Layout file path should not be empty");
+    
+    // Check if layout_content is returned when return_layout is true
+    if return_layout {
+        assert!(result.layout_content.is_some(), "Layout content should be present when return_layout is true");
+        
+        // Verify layout file doesn't exist on disk
+        let layout_path = Path::new(&result.layout_file_path);
+        assert!(!layout_path.exists(), "Layout file should not exist on disk when return_layout is true");
+    } else {
+        assert!(result.layout_content.is_none(), "Layout content should be None when return_layout is false");
+        
+        // Verify layout file exists on disk
+        let layout_path = Path::new(&result.layout_file_path);
+        assert!(layout_path.exists(), "Layout file should exist on disk");
+    }
+    
+    // Verify symbols were not created
+    let symbol_dirs_exist = std::fs::read_dir(&ctx.symbols_path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .any(|entry| {
+            let path = entry.path();
+            path.is_dir() && path.file_name().unwrap().to_str().unwrap().starts_with("block_")
+        });
+    
+    assert!(symbol_dirs_exist, "Block directories should be created");
+    
+    // Check that no symbols were created
+    let mut symbols_found = false;
+    for block_dir in std::fs::read_dir(&ctx.symbols_path()).unwrap()
+                            .filter_map(Result::ok)
+                            .filter(|entry| entry.path().is_dir() &&
+                                entry.file_name().to_str().unwrap().starts_with("block_")) {
+        
+        for entry in std::fs::read_dir(block_dir.path()).unwrap().filter_map(Result::ok) {
+            if entry.path().is_file() && entry.file_name() != "_raptorq_layout.json" {
+                symbols_found = true;
+                break;
+            }
+        }
+    }
+    
+    assert!(!symbols_found, "No symbol files should be created when using create_metadata");
+    
+    // If we're returning the layout content directly, let's save it to disk for the decoding test
+    let layout_path = if return_layout {
+        let layout_path = Path::new(&ctx.symbols_path()).join("_raptorq_layout.json");
+        let layout_content = result.layout_content.unwrap();
+        std::fs::write(&layout_path, layout_content)?;
+        layout_path
+    } else {
+        Path::new(&result.layout_file_path).to_path_buf()
+    };
+    
+    // Now that we have metadata, let's encode the file normally to get symbols
+    let _ = processor.encode_file(
+        &ctx.input_path(),
+        &ctx.symbols_path(),
+        block_size,
+        false
+    ).expect("Failed to encode file");
+    
+    // Then decode using the metadata layout
+    processor.decode_symbols(
+        &ctx.symbols_path(),
+        &ctx.output_path(),
+        &layout_path.to_string_lossy()
+    ).expect("Failed to decode symbols with metadata layout");
+    
+    // Verify the decoded file matches the original
+    ctx.verify_files_match()
+}
+
+/// System test for creating metadata for a small file (1KB)
+#[test]
+fn test_sys_create_metadata_small_file() {
+    let mut config = ProcessorConfig::default();
+    config.redundancy_factor = 2;
+    let processor = RaptorQProcessor::new(config);
+    let file_size = 1 * 1024; // 1KB
+    
+    let result = test_create_metadata(file_size, &processor, 0, false)
+        .expect("Test failed with IO error");
+    
+    assert!(result, "Verification of metadata creation failed");
+}
+
+/// System test for creating metadata with return_layout=true
+#[test]
+fn test_sys_create_metadata_return_layout() {
+    let processor = RaptorQProcessor::new(ProcessorConfig::default());
+    let file_size = 5 * 1024; // 5KB
+    
+    let result = test_create_metadata(file_size, &processor, 0, true)
+        .expect("Test failed with IO error");
+    
+    assert!(result, "Verification of metadata creation with return_layout failed");
+}
+
+/// System test for creating metadata for a medium file with auto-splitting
+#[test]
+fn test_sys_create_metadata_medium_file_auto_chunk() {
+    // Use smaller memory limit to force auto-splitting
+    let config = ProcessorConfig {
+        symbol_size: 1024,
+        redundancy_factor: 6,
+        max_memory_mb: 1, // Small memory limit to force splitting
+        concurrency_limit: 4,
+    };
+    
+    let processor = RaptorQProcessor::new(config);
+    let file_size = 10 * 1024; // 10KB
+    
+    let result = test_create_metadata(file_size, &processor, 0, false)
+        .expect("Test failed with IO error");
+    
+    assert!(result, "Verification of metadata creation with auto-splitting failed");
+}
+
+/// System test for creating metadata for a medium file with manual splitting
+#[test]
+fn test_sys_create_metadata_medium_file_manual_chunk() {
+    let processor = RaptorQProcessor::new(ProcessorConfig::default());
+    let file_size = 50 * 1024; // 50KB
+    let block_size = 10 * 1024; // 10KB blocks
+    
+    let result = test_create_metadata(file_size, &processor, block_size, false)
+        .expect("Test failed with IO error");
+    
+    assert!(result, "Verification of metadata creation with manual splitting failed");
+}
+
+/// System test for error handling during metadata creation (non-existent input)
+#[test]
+fn test_sys_error_handling_create_metadata() {
+    let processor = RaptorQProcessor::new(ProcessorConfig::default());
+    
+    // Create test context (only used for the symbols directory)
+    let ctx = TestContext::new(1024).expect("Failed to create test context");
+    
+    // Try to create metadata for a non-existent file
+    let non_existent_file = ctx.temp_dir.path().join("does_not_exist.bin");
+    
+    let result = processor.create_metadata(
+        &non_existent_file.to_string_lossy(),
+        &ctx.symbols_path(),
+        0,
+        false
+    );
+    
+    // Verify error is reported correctly
+    assert!(result.is_err(), "Expected metadata creation to fail with non-existent file");
+    match result {
+        Err(err) => {
+            assert!(format!("{}", err).contains("not found"),
+                    "Error message should indicate file not found");
+        },
+        _ => panic!("Expected FileNotFound error"),
+    }
+}

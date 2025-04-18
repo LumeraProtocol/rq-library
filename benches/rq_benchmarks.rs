@@ -62,6 +62,21 @@ fn encode_file_for_decoding(processor: &RaptorQProcessor, input_path: &Path, out
     result.layout_file_path
 }
 
+// Helper function to create metadata and return layout file path
+#[allow(dead_code)]
+fn create_metadata_for_benchmarking(processor: &RaptorQProcessor, input_path: &Path, output_dir: &Path, return_layout: bool) -> String {
+    let result = processor
+        .create_metadata(
+            input_path.to_str().unwrap(),
+            output_dir.to_str().unwrap(),
+            0, // Let the processor determine block size
+            return_layout,
+        )
+        .expect("Failed to create metadata");
+
+    result.layout_file_path
+}
+
 fn bytes_to_mb_or_gb(bytes: u64) -> String {
     const MB: f64 = 1024.0 * 1024.0;
     const GB: f64 = 1024.0 * 1024.0 * 1024.0;
@@ -441,6 +456,186 @@ fn bench_decode_1gb(group: &mut BenchmarkGroup<WallTime>) {
     // Cleanup happens automatically when temp_dir is dropped
 }
 
+// Benchmark creating metadata for a 1MB file
+fn bench_create_metadata_1mb(group: &mut BenchmarkGroup<WallTime>) {
+    let config = ProcessorConfig::default();
+    let processor = RaptorQProcessor::new(config);
+        
+    let mut max_allocations = 0;
+    let mut max_bytes = 0;
+    let mut total_allocations = 0;
+    let mut total_bytes = 0;
+    let mut counter = 0;
+
+    group.bench_function("create_metadata_1mb", |b| {
+        // Set up environment fresh for each iteration
+        let (temp_dir, input_file, output_dir) = setup_test_env(SIZE_1MB);
+
+        b.iter(|| {
+            let info = allocation_counter::measure(|| {
+                processor
+                    .create_metadata(
+                        input_file.to_str().unwrap(),
+                        output_dir.to_str().unwrap(),
+                        0, // Let the processor determine block size
+                        false,
+                    )
+                    .expect("Failed to create metadata");
+            });
+            if max_allocations < info.count_total {
+                max_allocations = info.count_total;
+            }
+            if max_bytes < info.bytes_total {
+                max_bytes = info.bytes_total;
+            }
+            total_allocations += info.count_total;
+            total_bytes += info.bytes_total;
+            counter += 1;
+        });
+
+        // Keep temp_dir in scope until benchmark is done
+        drop(temp_dir);
+    });
+
+    println!("Max bytes allocated {}; Max number of allocations: {}", bytes_to_mb_or_gb(max_bytes), max_allocations);
+    println!("Average bytes allocated: {}; Average number of allocations: {}", bytes_to_mb_or_gb(total_bytes / counter), total_allocations / counter);
+}
+
+// Benchmark creating metadata for a 10MB file
+fn bench_create_metadata_10mb(group: &mut BenchmarkGroup<WallTime>) {
+    let config = ProcessorConfig::default();
+    let processor = RaptorQProcessor::new(config);
+    
+    let mut max_allocations = 0;
+    let mut max_bytes = 0;
+    let mut total_allocations = 0;
+    let mut total_bytes = 0;
+    let mut counter = 0;
+    
+    group.bench_function("create_metadata_10mb", |b| {
+        // Set up environment fresh for each iteration
+        let (temp_dir, input_file, output_dir) = setup_test_env(SIZE_10MB);
+        
+        b.iter(|| {
+            let info = allocation_counter::measure(|| {
+                processor
+                    .create_metadata(
+                        input_file.to_str().unwrap(),
+                        output_dir.to_str().unwrap(),
+                        0, // Let the processor determine block size
+                        false,
+                    )
+                    .expect("Failed to create metadata");
+            });
+            if max_allocations < info.count_total {
+                max_allocations = info.count_total;
+            }
+            if max_bytes < info.bytes_total {
+                max_bytes = info.bytes_total;
+            }
+            total_allocations += info.count_total;
+            total_bytes += info.bytes_total;
+            counter += 1;
+        });
+        
+        // Keep temp_dir in scope until benchmark is done
+        drop(temp_dir);
+    });
+
+    println!("Max bytes allocated {}; Max number of allocations: {}", bytes_to_mb_or_gb(max_bytes), max_allocations);
+    println!("Average bytes allocated: {}; Average number of allocations: {}", bytes_to_mb_or_gb(total_bytes / counter), total_allocations / counter);
+}
+
+// Benchmark creating metadata for a 100MB file
+fn bench_create_metadata_100mb(group: &mut BenchmarkGroup<WallTime>) {
+    let config = ProcessorConfig::default();
+    let processor = RaptorQProcessor::new(config);
+    
+    let mut max_allocations = 0;
+    let mut max_bytes = 0;
+    let mut total_allocations = 0;
+    let mut total_bytes = 0;
+    let mut counter = 0;
+    
+    group.bench_function("create_metadata_100mb", |b| {
+        // Set up environment fresh for each iteration
+        let (temp_dir, input_file, output_dir) = setup_test_env(SIZE_100MB);
+        
+        b.iter(|| {
+            let info = allocation_counter::measure(|| {
+                processor
+                    .create_metadata(
+                        input_file.to_str().unwrap(),
+                        output_dir.to_str().unwrap(),
+                        0, // Let the processor determine block size
+                        false,
+                    )
+                    .expect("Failed to create metadata");
+            });
+            if max_allocations < info.count_total {
+                max_allocations = info.count_total;
+            }
+            if max_bytes < info.bytes_total {
+                max_bytes = info.bytes_total;
+            }
+            total_allocations += info.count_total;
+            total_bytes += info.bytes_total;
+            counter += 1;
+        });
+        
+        // Keep temp_dir in scope until benchmark is done
+        drop(temp_dir);
+    });
+    
+    println!("Max bytes allocated {}; Max number of allocations: {}", bytes_to_mb_or_gb(max_bytes), max_allocations);
+    println!("Average bytes allocated: {}; Average number of allocations: {}", bytes_to_mb_or_gb(total_bytes / counter), total_allocations / counter);
+}
+
+// Benchmark creating metadata for a 1GB file
+fn bench_create_metadata_1gb(group: &mut BenchmarkGroup<WallTime>) {
+    let config = ProcessorConfig::default();
+    let processor = RaptorQProcessor::new(config);
+    
+    let mut max_allocations = 0;
+    let mut max_bytes = 0;
+    let mut total_allocations = 0;
+    let mut total_bytes = 0;
+    let mut counter = 0;
+    
+    group.bench_function("create_metadata_1gb", |b| {
+        // Set up environment fresh for each iteration
+        let (temp_dir, input_file, output_dir) = setup_test_env(SIZE_1GB);
+        
+        b.iter(|| {
+            let info = allocation_counter::measure(|| {
+                processor
+                    .create_metadata(
+                        input_file.to_str().unwrap(),
+                        output_dir.to_str().unwrap(),
+                        0, // Let the processor determine block size
+                        false,
+                    )
+                    .expect("Failed to create metadata");
+            });
+            if max_allocations < info.count_total {
+                max_allocations = info.count_total;
+            }
+            if max_bytes < info.bytes_total {
+                max_bytes = info.bytes_total;
+            }
+            total_allocations += info.count_total;
+            total_bytes += info.bytes_total;
+            counter += 1;
+        });
+        
+        // Keep temp_dir in scope until benchmark is done
+        drop(temp_dir);
+    });
+    
+    println!("Max bytes allocated {}; Max number of allocations: {}", bytes_to_mb_or_gb(max_bytes), max_allocations);
+    println!("Average bytes allocated: {}; Average number of allocations: {}", bytes_to_mb_or_gb(total_bytes / counter), total_allocations / counter);
+}
+
 // Group encoding benchmarks
 fn encoding_benchmarks(c: &mut Criterion) {
     // Create a benchmark group with specific configuration for encoding
@@ -496,5 +691,33 @@ fn decoding_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, encoding_benchmarks, decoding_benchmarks);
+// Group metadata creation benchmarks
+fn metadata_benchmarks(c: &mut Criterion) {
+    // Create a benchmark group with specific configuration for metadata creation
+    let mut group = c.benchmark_group("Metadata Creation");
+
+    // group.measurement_time(Duration::from_secs(5));  <-- this is default
+    // group.sample_size(100);                          <-- this is default
+    bench_create_metadata_1mb(&mut group);
+    println!();
+
+    group.measurement_time(Duration::from_secs(20));
+    group.sample_size(100);
+    bench_create_metadata_10mb(&mut group);
+    println!();
+
+    group.measurement_time(Duration::from_secs(120));
+    group.sample_size(50);
+    bench_create_metadata_100mb(&mut group);
+    println!();
+
+    group.measurement_time(Duration::from_secs(300));
+    group.sample_size(10);
+    bench_create_metadata_1gb(&mut group);
+    println!();
+    
+    group.finish();
+}
+
+criterion_group!(benches, encoding_benchmarks, decoding_benchmarks, metadata_benchmarks);
 criterion_main!(benches);
