@@ -1,3 +1,3 @@
 module github.com/LumeraProtocol/rq-library/bindings/go
 
-go 1.24.1
+go 1.21
