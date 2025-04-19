@@ -1,0 +1,155 @@
+name: Sync RQ Go Bindings
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'bindings/lib/**'
+      - 'bindings/go/**'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v3
+        with:
+          path: source-repo
+          fetch-depth: 0
+
+      - name: Checkout target repository
+        uses: actions/checkout@v3
+        with:
+          repository: LumeraProtocol/rq-go
+          path: target-repo
+          token: ${{ secrets.SYNC_PAT }}
+
+      - name: Set up Git identity
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+
+      - name: Detect changed files
+        id: changed-files
+        run: |
+          cd source-repo
+          # Get the list of changed files in the bindings/lib and bindings/go directories
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep -E '^bindings/(lib|go)/' || true)
+          echo "Changed files: $CHANGED_FILES"
+          echo "CHANGED_FILES<<EOF" >> $GITHUB_ENV
+          echo "$CHANGED_FILES" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Copy changed files to target repository
+        if: env.CHANGED_FILES != ''
+        run: |
+          # Create necessary directories in target repo
+          mkdir -p target-repo/lib
+          mkdir -p target-repo/go
+
+          # Create platform-specific directories for lib
+          mkdir -p target-repo/lib/darwin/amd64
+          mkdir -p target-repo/lib/darwin/arm64
+          mkdir -p target-repo/lib/linux/amd64
+          mkdir -p target-repo/lib/linux/arm64
+          mkdir -p target-repo/lib/windows/amd64
+
+          # Process each changed file
+          for file in ${{ env.CHANGED_FILES }}; do
+            # Extract the directory (lib or go)
+            if [[ $file == bindings/lib/* ]]; then
+              # Handle library files based on filename patterns
+              filename=${file#bindings/lib/}
+
+              # Skip README and other non-library files - copy them directly
+              if [[ $filename == *.md || $filename == *.txt ]]; then
+                echo "Copying $file to target-repo/lib/$filename"
+                cp "source-repo/$file" "target-repo/lib/$filename"
+                continue
+              fi
+
+              # Check if the file is already in a platform subfolder
+              if [[ $filename == darwin/amd64/* ]]; then
+                platform_dir="darwin/amd64"
+                filename=${filename#darwin/amd64/}
+              elif [[ $filename == darwin/arm64/* ]]; then
+                platform_dir="darwin/arm64"
+                filename=${filename#darwin/arm64/}
+              elif [[ $filename == linux/amd64/* ]]; then
+                platform_dir="linux/amd64"
+                filename=${filename#linux/amd64/}
+              elif [[ $filename == linux/arm64/* ]]; then
+                platform_dir="linux/arm64"
+                filename=${filename#linux/arm64/}
+              elif [[ $filename == windows/amd64/* ]]; then
+                platform_dir="windows/amd64"
+                filename=${filename#windows/amd64/}
+              else
+                # File is not in a platform subfolder, determine platform from filename or file inspection
+                if [[ $filename == *darwin* || $filename == *.dylib ]]; then
+                  # macOS file - determine architecture
+                  if file "source-repo/$file" | grep -q "arm64"; then
+                    platform_dir="darwin/arm64"
+                  else
+                    platform_dir="darwin/amd64"
+                  fi
+                elif [[ $filename == *linux* || $filename == *.so ]]; then
+                  # Linux file - determine architecture
+                  if file "source-repo/$file" | grep -q "aarch64"; then
+                    platform_dir="linux/arm64"
+                  else
+                    platform_dir="linux/amd64"
+                  fi
+                elif [[ $filename == *windows* || $filename == *.dll || $filename == *.lib ]]; then
+                  platform_dir="windows/amd64"
+                else
+                  # Default to current platform
+                  if [[ $(uname) == "Darwin" ]]; then
+                    if [[ $(uname -m) == "arm64" ]]; then
+                      platform_dir="darwin/arm64"
+                    else
+                      platform_dir="darwin/amd64"
+                    fi
+                  else
+                    platform_dir="linux/amd64"
+                  fi
+                fi
+              fi
+
+              echo "Copying $file to target-repo/lib/$platform_dir/$filename"
+              cp "source-repo/$file" "target-repo/lib/$platform_dir/$filename"
+            elif [[ $file == bindings/go/* ]]; then
+              dir="go"
+              filename=${file#bindings/go/}
+              echo "Copying $file to target-repo/$dir/$filename"
+              cp "source-repo/$file" "target-repo/$dir/$filename"
+            else
+              continue
+            fi
+          done
+
+      - name: Update go.mod in target repository
+        if: contains(env.CHANGED_FILES, 'bindings/go/go.mod')
+        run: |
+          cd target-repo
+          # Update the module name in go.mod
+          sed -i 's|github.com/LumeraProtocol/rq-library/bindings/go|github.com/LumeraProtocol/rq-go|g' go/go.mod
+          # Create a root go.mod file if it doesn't exist
+          if [ ! -f go.mod ]; then
+            echo "module github.com/LumeraProtocol/rq-go" > go.mod
+            echo "" >> go.mod
+            echo "go 1.21" >> go.mod
+          fi
+
+      - name: Commit and push changes
+        run: |
+          cd target-repo
+          git add .
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Sync RQ Go bindings from rq-library"
+            git push
+          fi

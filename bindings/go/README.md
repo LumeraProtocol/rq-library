@@ -7,7 +7,7 @@ This Go package provides bindings to the RaptorQ erasure coding library. It uses
 This package uses a static library for the RaptorQ implementation. To use this package, add it to your Go module:
 
 ```
-go get github.com/LumeraProtocol/rq-library/bindings/go
+go get github.com/LumeraProtocol/rq-go
 ```
 
 ## Usage
@@ -17,7 +17,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/LumeraProtocol/rq-library/bindings/go"
+	"github.com/LumeraProtocol/rq-go"
 )
 
 func main() {
@@ -50,7 +50,7 @@ This module uses static linking by default, which means:
 The Go bindings require:
 
 - Go 1.17 or newer
-- The static RaptorQ library (`librq_library.a` in `../lib`)
+- The static RaptorQ library (`librq_library.a` in the appropriate platform directory under `../lib`)
 - A C compiler (gcc, clang, or MSVC)
 
 Additionally, your system will need the following development dependencies:
@@ -73,9 +73,9 @@ The CGO flags required for static linking are embedded in the source code, so no
 
 The static library can be built and used on:
 
-- Linux x86_64
+- Linux amd64
 - macOS (Intel/Apple Silicon)
-- Windows x86_64
+- Windows amd64
 
 Static building for other platforms may require additional configuration. See the `bindings/lib/README.md` file for build instructions.
 
