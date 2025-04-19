@@ -5,8 +5,8 @@ on:
     branches:
       - main
     paths:
-      - 'bindings/lib/**'
-      - 'bindings/go/**'
+      - 'dist/lib/**'
+      - 'include/**'
 
 jobs:
   sync:
@@ -34,8 +34,8 @@ jobs:
         id: changed-files
         run: |
           cd source-repo
-          # Get the list of changed files in the bindings/lib and bindings/go directories
-          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep -E '^bindings/(lib|go)/' || true)
+          # Get the list of changed files in the dist/lib and include directories
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep -E '^(dist/lib/|include/)' || true)
           echo "Changed files: $CHANGED_FILES"
           echo "CHANGED_FILES<<EOF" >> $GITHUB_ENV
           echo "$CHANGED_FILES" >> $GITHUB_ENV
@@ -46,7 +46,7 @@ jobs:
         run: |
           # Create necessary directories in target repo
           mkdir -p target-repo/lib
-          mkdir -p target-repo/go
+          mkdir -p target-repo/include
 
           # Create platform-specific directories for lib
           mkdir -p target-repo/lib/darwin/amd64
@@ -57,10 +57,14 @@ jobs:
 
           # Process each changed file
           for file in ${{ env.CHANGED_FILES }}; do
-            # Extract the directory (lib or go)
-            if [[ $file == bindings/lib/* ]]; then
-              # Handle library files based on filename patterns
-              filename=${file#bindings/lib/}
+            # Handle include files
+            if [[ $file == include/* ]]; then
+              filename=${file#include/}
+              echo "Copying $file to target-repo/include/$filename"
+              cp "source-repo/$file" "target-repo/include/$filename"
+            # Handle dist/lib files
+            elif [[ $file == dist/lib/* ]]; then
+              filename=${file#dist/lib/}
 
               # Skip README and other non-library files - copy them directly
               if [[ $filename == *.md || $filename == *.txt ]]; then
@@ -69,24 +73,11 @@ jobs:
                 continue
               fi
 
-              # Check if the file is already in a platform subfolder
-              if [[ $filename == darwin/amd64/* ]]; then
-                platform_dir="darwin/amd64"
-                filename=${filename#darwin/amd64/}
-              elif [[ $filename == darwin/arm64/* ]]; then
-                platform_dir="darwin/arm64"
-                filename=${filename#darwin/arm64/}
-              elif [[ $filename == linux/amd64/* ]]; then
-                platform_dir="linux/amd64"
-                filename=${filename#linux/amd64/}
-              elif [[ $filename == linux/arm64/* ]]; then
-                platform_dir="linux/arm64"
-                filename=${filename#linux/arm64/}
-              elif [[ $filename == windows/amd64/* ]]; then
-                platform_dir="windows/amd64"
-                filename=${filename#windows/amd64/}
-              else
-                # File is not in a platform subfolder, determine platform from filename or file inspection
+              # Preserve the platform/architecture structure
+              platform_dir=$(dirname "$filename")
+              if [[ $platform_dir == "." ]]; then
+                # File is in the root of dist/lib
+                # Determine platform from filename or file inspection
                 if [[ $filename == *darwin* || $filename == *.dylib ]]; then
                   # macOS file - determine architecture
                   if file "source-repo/$file" | grep -q "arm64"; then
@@ -115,32 +106,22 @@ jobs:
                     platform_dir="linux/amd64"
                   fi
                 fi
+                # Extract just the filename without the path
+                base_filename=$(basename "$filename")
+                echo "Copying $file to target-repo/lib/$platform_dir/$base_filename"
+                cp "source-repo/$file" "target-repo/lib/$platform_dir/$base_filename"
+              else
+                # File is already in a platform subfolder structure
+                echo "Copying $file to target-repo/lib/$filename"
+                mkdir -p "target-repo/lib/$(dirname "$filename")"
+                cp "source-repo/$file" "target-repo/lib/$filename"
               fi
-
-              echo "Copying $file to target-repo/lib/$platform_dir/$filename"
-              cp "source-repo/$file" "target-repo/lib/$platform_dir/$filename"
-            elif [[ $file == bindings/go/* ]]; then
-              dir="go"
-              filename=${file#bindings/go/}
-              echo "Copying $file to target-repo/$dir/$filename"
-              cp "source-repo/$file" "target-repo/$dir/$filename"
             else
               continue
             fi
           done
 
-      - name: Update go.mod in target repository
-        if: contains(env.CHANGED_FILES, 'bindings/go/go.mod')
-        run: |
-          cd target-repo
-          # Update the module name in go.mod
-          sed -i 's|github.com/LumeraProtocol/rq-library/bindings/go|github.com/LumeraProtocol/rq-go|g' go/go.mod
-          # Create a root go.mod file if it doesn't exist
-          if [ ! -f go.mod ]; then
-            echo "module github.com/LumeraProtocol/rq-go" > go.mod
-            echo "" >> go.mod
-            echo "go 1.21" >> go.mod
-          fi
+      # We're removing the go.mod update step as we're not handling bindings/go anymore
 
       - name: Commit and push changes
         run: |
