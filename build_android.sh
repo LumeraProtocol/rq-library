@@ -29,3 +29,13 @@ fi
 # Build
 echo "Building Rust project for $TARGET (API $API_LEVEL)"
 cargo build --target "$TARGET" --release
+
+# Create the output directory if it doesn't exist
+mkdir -p dist/lib/android/arm64
+
+# Copy the built library files
+echo "Copying built files to dist/lib/android/arm64/"
+cp target/$TARGET/release/librq_library.so dist/lib/android/arm64/
+cp target/$TARGET/release/librq_library.a dist/lib/android/arm64/
+
+echo "Android build completed. Output files in dist/lib/android/arm64/"

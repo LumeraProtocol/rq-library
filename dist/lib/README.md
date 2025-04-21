@@ -29,35 +29,46 @@ lib/
 
 ## Building the Static Library
 
-To build the static library for your platform, navigate to the root of the RaptorQ project and run:
+To build the static library for your platform, navigate to the root of the RaptorQ project and use the provided build scripts:
 
 ```bash
-# Make sure staticlib is in the crate-type list in Cargo.toml
-# [lib]
-# name = "rq_library"
-# crate-type = ["cdylib", "staticlib", "rlib"]
+# For all supported platforms on the current OS
+./build_all.sh
 
+# For specific platforms:
+./build_macos.sh     # Build for macOS (Intel and ARM64)
+./build_linux.sh     # Build for Linux (x86_64 and aarch64)
+./build_ios.sh       # Build for iOS
+./build_android.sh   # Build for Android
+./build_wasm_browser.sh # Build for WebAssembly
+
+# On Windows (using PowerShell):
+.\build_windows.ps1  # Build for Windows (x64 and x86)
+```
+
+The build scripts will automatically:
+1. Install any required Rust targets
+2. Build the library for the specified platform(s)
+3. Create the necessary directory structure
+4. Copy the built libraries to the appropriate directories in `dist/lib/`
+
+### Manual Building
+
+If you prefer to build manually, make sure staticlib is in the crate-type list in Cargo.toml:
+```toml
+[lib]
+name = "rq_library"
+crate-type = ["cdylib", "staticlib", "rlib"]
+```
+
+Then build for your target and copy to the appropriate directory:
+```bash
 # Build static library (release mode)
-cargo build --release
+cargo build --release --target <target-triple>
 
 # Copy the static library to the appropriate platform directory
-# On Linux amd64:
-mkdir -p bindings/lib/linux/amd64
-cp target/release/librq_library.a bindings/lib/linux/amd64/
-
-# On macOS Intel (with deployment target for compatibility):
-mkdir -p bindings/lib/darwin/amd64
-MACOSX_DEPLOYMENT_TARGET=15.0 cargo build --release
-cp target/release/librq_library.a bindings/lib/darwin/amd64/
-
-# On macOS Apple Silicon:
-mkdir -p bindings/lib/darwin/arm64
-MACOSX_DEPLOYMENT_TARGET=15.0 cargo build --release --target aarch64-apple-darwin
-cp target/aarch64-apple-darwin/release/librq_library.a bindings/lib/darwin/arm64/
-
-# On Windows:
-mkdir -p bindings/lib/windows/amd64
-copy target\release\rq_library.lib bindings\lib\windows\amd64\librq_library.a
+mkdir -p dist/lib/<platform>/<arch>
+cp target/<target-triple>/release/librq_library.a dist/lib/<platform>/<arch>/
 ```
 
 ### macOS Deployment Target
