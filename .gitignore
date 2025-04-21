@@ -20,3 +20,6 @@ custom_modes.json
 !/bindings/lib/*.dylib
 !/bindings/lib/*.dll
 !/bindings/lib/*.a
+dist/lib/wasm/browser/README.md
+
+.DS_Store

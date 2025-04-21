@@ -23,3 +23,4 @@ wasm-bindgen --target web \
     target/wasm32-unknown-unknown/release/rq_library.wasm
 
 echo "Browser WASM build completed. Output files in dist/lib/wasm/browser"
+echo "The rq_library.js and rq_library.d.ts files contain the RaptorQSession class and can be used directly."

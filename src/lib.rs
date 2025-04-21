@@ -1,8 +1,16 @@
 pub mod processor;
 mod platform;
 
+// Import wasm_browser module
+#[cfg(all(target_arch = "wasm32", feature = "browser-wasm"))]
+pub mod wasm_browser;
+
 // Re-export key types for simpler imports
 pub use processor::{ProcessorConfig, RaptorQProcessor, ProcessResult, ProcessError};
+
+// Re-export RaptorQSession for WASM builds
+#[cfg(all(target_arch = "wasm32", feature = "browser-wasm"))]
+pub use wasm_browser::browser_wasm::RaptorQSession;
 
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
