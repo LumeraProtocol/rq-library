@@ -1,5 +1,5 @@
 pub mod processor;
-mod platform;
+pub mod file_io;
 
 // Import wasm_browser module
 #[cfg(all(target_arch = "wasm32", feature = "browser-wasm"))]
@@ -82,9 +82,10 @@ pub extern "C" fn raptorq_free_session(session_id: usize) -> bool {
 /// *  -5 on invalid session
 /// * -11 on IO error
 /// * -12 on File not found
-/// * -13 on Encoding failed
-/// * -15 on Memory limit exceeded
-/// * -16 on Concurrency limit reached
+/// * -13 on Invalid path
+/// * -14 on Encoding failed
+/// * -16 on Memory limit exceeded
+/// * -17 on Concurrency limit reached
 #[unsafe(no_mangle)]
 pub extern "C" fn raptorq_create_metadata(
     session_id: usize,
@@ -148,9 +149,10 @@ pub extern "C" fn raptorq_create_metadata(
         Err(e) => match e {
             ProcessError::IOError(_) => -11,
             ProcessError::FileNotFound(_) => -12,
-            ProcessError::EncodingFailed(_) => -13,
-            ProcessError::MemoryLimitExceeded { .. } => -15,
-            ProcessError::ConcurrencyLimitReached => -16,
+            ProcessError::InvalidPath(_) => -13,
+            ProcessError::EncodingFailed(_) => -14,
+            ProcessError::MemoryLimitExceeded { .. } => -16,
+            ProcessError::ConcurrencyLimitReached => -17,
             _ => -1,
         },
     }
@@ -176,9 +178,10 @@ pub extern "C" fn raptorq_create_metadata(
 /// *  -5 on invalid session
 /// * -11 on IO error
 /// * -12 on File not found
-/// * -13 on Encoding failed
-/// * -15 on Memory limit exceeded
-/// * -16 on Concurrency limit reached
+/// * -13 on Invalid Path
+/// * -14 on Encoding failed
+/// * -16 on Memory limit exceeded
+/// * -17 on Concurrency limit reached
 #[unsafe(no_mangle)]
 pub extern "C" fn raptorq_encode_file(
     session_id: usize,
@@ -241,9 +244,10 @@ pub extern "C" fn raptorq_encode_file(
         Err(e) => match e {
             ProcessError::IOError(_) => -11,
             ProcessError::FileNotFound(_) => -12,
-            ProcessError::EncodingFailed(_) => -13,
-            ProcessError::MemoryLimitExceeded { .. } => -15,
-            ProcessError::ConcurrencyLimitReached => -16,
+            ProcessError::InvalidPath(_) => -13,
+            ProcessError::EncodingFailed(_) => -14,
+            ProcessError::MemoryLimitExceeded { .. } => -16,
+            ProcessError::ConcurrencyLimitReached => -17,
             _ => -1,
         },
     }
@@ -323,9 +327,10 @@ pub extern "C" fn raptorq_get_last_error(
 /// *  -5 on invalid session
 /// * -11 on IO error
 /// * -12 on File not found
-/// * -14 on Decoding failed
-/// * -15 on Memory limit exceeded
-/// * -16 on Concurrency limit reached
+/// * -13 on Invalid Path
+/// * -15 on Decoding failed
+/// * -16 on Memory limit exceeded
+/// * -17 on Concurrency limit reached
 #[unsafe(no_mangle)]
 pub extern "C" fn raptorq_decode_symbols(
     session_id: usize,
@@ -364,7 +369,8 @@ pub extern "C" fn raptorq_decode_symbols(
         Err(e) => match e {
             ProcessError::IOError(_) => -11,
             ProcessError::FileNotFound(_) => -12,
-            ProcessError::DecodingFailed(_) => -14,
+            ProcessError::InvalidPath(_) => -13,
+            ProcessError::DecodingFailed(_) => -15,
             _ => -1, // Generic error for unhandled cases
         },
     }

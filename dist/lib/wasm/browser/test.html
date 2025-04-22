@@ -1,114 +1,202 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<title>rq_library WASM demo</title>
-<style>
-body{font-family:sans-serif;margin:2rem;max-width:720px;display:flex;flex-direction:column;gap:1rem}
-button{padding:.4rem 1.1rem;font-size:1rem}
-#log{border:1px solid #ccc;height:14rem;overflow:auto;white-space:pre-wrap;padding:.7rem}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RaptorQ WASM File I/O Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .log-container {
+            border: 1px solid #ccc;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            background-color: #f5f5f5;
+            margin-bottom: 20px;
+            font-family: monospace;
+        }
+        button {
+            padding: 8px 16px;
+            margin-right: 10px;
+            margin-bottom: 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .file-input {
+            margin-bottom: 20px;
+        }
+    </style>
 </head>
 <body>
-
-<label>Source file <input type="file" id="src"></label>
-<button id="meta">create_metadata</button>
-<button id="encode">encode_file</button>
-
-<label>Symbols directory <input type="file" id="symdir" webkitdirectory></label>
-<label>Layout file <input type="file" id="layout"></label>
-<button id="decode">decode_symbols</button>
-
-<output id="log"></output>
-
-<script type="module">
-import init, { RaptorQSession } from './rq_library.js';
-
-const p = str => {const o=document.getElementById('log');o.textContent+=str+'\n';o.scrollTop=o.scrollHeight};
-
-/* --- Normalised‑path, Promise‑returning in‑memory FS ------------------- */
-const norm = path => {
-  if(!path) return '/';
-  let p = path.startsWith('/') ? path : '/'+path;
-  // squash repeated slashes, drop trailing
-  p = p.replace(/\/+/g,'/'); 
-  return p.length>1 && p.endsWith('/') ? p.slice(0,-1) : p;
-};
-
-/* utility – synchronously‑resolved “thenable” */
-const instant = v => ({ then: (res)=>res(v), ...v });
-
-class VFS {
-  files = new Map(); dirs = new Set(['/']);
-
-  mkdir(p){ this.dirs.add(norm(p)); return instant(null); }
-
-  stat(p){
-    p = norm(p);
-    if (this.files.has(p)) return instant({
-      size: this.files.get(p).length,
-      is_file:  () => true,
-      is_dir:   () => false
-    });
-    if (this.dirs.has(p))  return instant({
-      size: 0,
-      is_file:  () => false,
-      is_dir:   () => true
-    });
-    throw `ENOENT ${p}`;               // make Path::exists() return false
-  }
-
-  read(p){ return instant(this.files.get(norm(p))); }
-
-  write(p,d){ this.files.set(norm(p), new Uint8Array(d)); return instant(null); }
-}
-
-const vfs=new VFS();
-
-/* --- WASM bootstrap ---------------------------------------------------- */
-await init();
-const session=new RaptorQSession(1024,2,128n,4n);
-session.set_filesystem({
-  mkdir : p => vfs.mkdir(p),
-  stat  : p => vfs.stat(p),
-  read  : p => vfs.read(p),
-  write : (p,d) => vfs.write(p,d)
-});
-p('WASM ready ✔');
-
-/* --- UI handlers ------------------------------------------------------- */
-document.getElementById('meta').onclick = async () => {
-  const f=document.getElementById('src').files[0];
-  if(!f) return p('⚠ Pick a source file first');
-  await vfs.write('/in.bin', await f.arrayBuffer());
-  await vfs.mkdir('/out');
-  await session.create_metadata('/in.bin','/out',0,true);
-  p('create_metadata ✔  (layout held in memory)');
-};
-
-document.getElementById('encode').onclick = async () => {
-  if(!await vfs.read('/in.bin')) return p('⚠ Run create_metadata first');
-  await session.encode_file('/in.bin','/out',0);
-  p('encode_file ✔  (/out now contains symbol files in VFS)');
-};
-
-document.getElementById('decode').onclick = async () => {
-  const dirFiles=[...document.getElementById('symdir').files];
-  const layout=document.getElementById('layout').files[0];
-  if(!dirFiles.length||!layout) return p('⚠ Choose symbols dir & layout file');
-  await vfs.mkdir('/sym');
-  for(const f of dirFiles) await vfs.write('/sym/'+f.name, await f.arrayBuffer());
-  await vfs.write('/layout.json', await layout.arrayBuffer());
-  await session.decode_symbols('/sym','/decoded.bin','/layout.json');
-  const blob=new Blob([await vfs.read('/decoded.bin')]);
-  const a=Object.assign(document.createElement('a'),{
-    href:URL.createObjectURL(blob),
-    download:'decoded.bin',
-    textContent:'download decoded.bin'
-  });
-  document.body.append(a);
-  p('decode_symbols ✔  (download link appended)');
-};
-</script>
+    <h1>RaptorQ WASM File I/O Test</h1>
+    
+    <div class="file-input">
+        <label for="file-upload">Upload a test file:</label>
+        <input type="file" id="file-upload">
+    </div>
+    
+    <div>
+        <button id="testFileIO">Test File I/O</button>
+        <button id="testDirManager">Test Directory Manager</button>
+        <button id="clearStorage">Clear Storage</button>
+    </div>
+    
+    <h3>Logs:</h3>
+    <div id="logs" class="log-container"></div>
+    
+    <script>
+        // Logging helper
+        function log(message) {
+            const logContainer = document.getElementById('logs');
+            const logEntry = document.createElement('div');
+            logEntry.textContent = message;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            console.log(message);
+        }
+        
+        // Wait for the WASM module to load
+        async function initWasm() {
+            try {
+                log("Loading WASM module...");
+                
+                // Initialize storage
+                if (!localStorage.getItem('directories')) {
+                    localStorage.setItem('directories', JSON.stringify([]));
+                }
+                
+                // Load the module (adjust path if needed)
+                const rqModule = await import('./rq_library.js');
+                window.rq = await rqModule.default();
+                
+                log("WASM module loaded successfully!");
+                log(`Version: ${window.rq.version()}`);
+                
+                // Enable buttons
+                document.getElementById('testFileIO').disabled = false;
+                document.getElementById('testDirManager').disabled = false;
+                
+                // Set up event listeners
+                setupListeners();
+            } catch (error) {
+                log(`Error loading WASM module: ${error.message}`);
+                console.error(error);
+            }
+        }
+        
+        function setupListeners() {
+            // File upload handler
+            document.getElementById('file-upload').addEventListener('change', async (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    try {
+                        log(`Reading file: ${file.name} (${file.size} bytes)`);
+                        
+                        // Read the file
+                        const buffer = await file.arrayBuffer();
+                        const data = new Uint8Array(buffer);
+                        
+                        // Store in localStorage for our mock file system
+                        const base64Data = btoa(String.fromCharCode.apply(null, data));
+                        localStorage.setItem(`file_data:/${file.name}`, base64Data);
+                        
+                        // Store metadata
+                        const metadata = { size: data.length };
+                        localStorage.setItem(`file_metadata:/${file.name}`, JSON.stringify(metadata));
+                        
+                        log(`File ${file.name} stored in mock filesystem`);
+                    } catch (error) {
+                        log(`Error processing file: ${error.message}`);
+                    }
+                }
+            });
+            
+            // Test File I/O button
+            document.getElementById('testFileIO').addEventListener('click', async () => {
+                try {
+                    const files = JSON.parse(localStorage.getItem('directories') || '[]');
+                    const fileKeys = Object.keys(localStorage)
+                        .filter(key => key.startsWith('file_data:/'))
+                        .map(key => key.replace('file_data:', ''));
+                    
+                    if (fileKeys.length === 0) {
+                        log("No test files available. Please upload a file first.");
+                        return;
+                    }
+                    
+                    const testFile = fileKeys[0];
+                    log(`Testing file I/O with file: ${testFile}`);
+                    
+                    // Create a RaptorQ session
+                    const session = new window.rq.RaptorQSession(1024, 10, 100, 4);
+                    
+                    // Use file operations
+                    log("Creating metadata...");
+                    const outputDir = "/output";
+                    
+                    // Test file operations through the encoded metadata
+                    const metadata = await session.create_metadata(testFile, outputDir, 0, true);
+                    
+                    log(`Metadata created successfully!`);
+                    log(`Symbols directory: ${metadata.symbolsDirectory}`);
+                    log(`Layout file path: ${metadata.layoutFilePath}`);
+                    log(`Total symbols: ${metadata.totalSymbolsCount}`);
+                    
+                } catch (error) {
+                    log(`Error testing file I/O: ${error.message}`);
+                    console.error(error);
+                }
+            });
+            
+            // Test Directory Manager button
+            document.getElementById('testDirManager').addEventListener('click', () => {
+                try {
+                    const testDir = "/test/directory/path";
+                    
+                    // This will use our DirManager to create directories
+                    window.syncCreateDirAll(testDir);
+                    
+                    const dirs = JSON.parse(localStorage.getItem('directories') || '[]');
+                    log(`Directories: ${JSON.stringify(dirs)}`);
+                    
+                } catch (error) {
+                    log(`Error testing directory manager: ${error.message}`);
+                }
+            });
+            
+            // Clear Storage button
+            document.getElementById('clearStorage').addEventListener('click', () => {
+                const fileKeys = Object.keys(localStorage)
+                    .filter(key => key.startsWith('file_data:') || 
+                                  key.startsWith('file_metadata:') || 
+                                  key === 'directories');
+                
+                fileKeys.forEach(key => localStorage.removeItem(key));
+                localStorage.setItem('directories', JSON.stringify([]));
+                
+                log("Storage cleared");
+            });
+        }
+        
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            // Disable buttons until WASM is ready
+            document.getElementById('testFileIO').disabled = true;
+            document.getElementById('testDirManager').disabled = true;
+            
+            // Initialize WASM
+            initWasm();
+        });
+    </script>
 </body>
 </html>

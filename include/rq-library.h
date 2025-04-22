@@ -54,9 +54,10 @@ bool raptorq_free_session(uintptr_t session_id);
  * *  -5 on invalid session
  * * -11 on IO error
  * * -12 on File not found
- * * -13 on Encoding failed
- * * -15 on Memory limit exceeded
- * * -16 on Concurrency limit reached
+ * * -13 on Invalid path
+ * * -14 on Encoding failed
+ * * -16 on Memory limit exceeded
+ * * -17 on Concurrency limit reached
  */
 int32_t raptorq_create_metadata(uintptr_t session_id,
                                 const char *input_path,
@@ -87,9 +88,10 @@ int32_t raptorq_create_metadata(uintptr_t session_id,
  * *  -5 on invalid session
  * * -11 on IO error
  * * -12 on File not found
- * * -13 on Encoding failed
- * * -15 on Memory limit exceeded
- * * -16 on Concurrency limit reached
+ * * -13 on Invalid Path
+ * * -14 on Encoding failed
+ * * -16 on Memory limit exceeded
+ * * -17 on Concurrency limit reached
  */
 int32_t raptorq_encode_file(uintptr_t session_id,
                             const char *input_path,
@@ -133,9 +135,10 @@ int32_t raptorq_get_last_error(uintptr_t session_id,
  * *  -5 on invalid session
  * * -11 on IO error
  * * -12 on File not found
- * * -14 on Decoding failed
- * * -15 on Memory limit exceeded
- * * -16 on Concurrency limit reached
+ * * -13 on Invalid Path
+ * * -15 on Decoding failed
+ * * -16 on Memory limit exceeded
+ * * -17 on Concurrency limit reached
  */
 int32_t raptorq_decode_symbols(uintptr_t session_id,
                                const char *symbols_dir,
@@ -159,6 +162,16 @@ uintptr_t raptorq_get_recommended_block_size(uintptr_t session_id, uint64_t file
  * Version information
  */
 int32_t raptorq_version(char *version_buffer, uintptr_t version_buffer_len);
+
+extern uint32_t js_file_size(const str *path);
+
+extern Promise js_read_chunk(const str *path, uint32_t offset, uint32_t length);
+
+extern Promise js_write_chunk(const str *path, uint32_t offset, const Uint8Array *data);
+
+extern Promise js_flush_file(const str *path);
+
+extern Promise js_create_dir_all(const str *path);
 
 #ifdef __cplusplus
 }  // extern "C"

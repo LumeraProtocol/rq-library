@@ -4,6 +4,7 @@
 .roo/
 memory-bank/
 custom_modes.json
+symphony-rq-library
 
 # Go specific ignores
 /bindings/go/vendor/

@@ -141,6 +141,9 @@ pub enum ProcessError {
     #[error("File not found: {0}")]
     FileNotFound(String),
 
+    #[error("Invalid path: {0}")]
+    InvalidPath(String),
+
     #[error("Encoding failed: {0}")]
     EncodingFailed(String),
 

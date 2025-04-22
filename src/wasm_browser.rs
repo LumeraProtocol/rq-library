@@ -9,10 +9,11 @@ pub mod browser_wasm {
     use serde::Serialize;
     use std::sync::Arc;
 
-    use crate::platform::browser::{
-        create_dir_all_async,
-        file_size_async,
-        set_filesystem_js,
+    // Import the new file I/O abstractions
+    use crate::file_io::{get_dir_manager, open_file_reader};
+    
+    // Import helpers from file_io/wasm module
+    use crate::file_io::wasm::{
         log_to_console,
     };
 
@@ -47,12 +48,6 @@ pub mod browser_wasm {
             }
         }
 
-        // Set filesystem access
-        #[wasm_bindgen]
-        pub fn set_filesystem(&self, js: JsValue) {
-            set_filesystem_js(js);
-        }
-
         // Create metadata (layout) without generating symbols
         #[wasm_bindgen]
         pub fn create_metadata(&self, input_path: String, output_dir: String, block_size: usize, return_layout: bool) -> Promise {
@@ -62,11 +57,16 @@ pub mod browser_wasm {
                 log_to_console(&format!("create_metadata called with input_path='{}', output_dir='{}', block_size={}, return_layout={}",
                     input_path, output_dir, block_size, return_layout));
                     
-                // Create output directory
-                create_dir_all_async(&output_dir).await?;
+                // Create output directory using the new DirManager trait
+                let dir_manager = get_dir_manager();
+                dir_manager.create_dir_all(&output_dir)
+                    .map_err(|e| JsValue::from_str(&format!("Failed to create directory: {}", e)))?;
 
-                // Get file size
-                let file_size = file_size_async(&input_path).await?;
+                // Get file size using the new FileReader trait
+                let reader = open_file_reader(&input_path)
+                    .map_err(|e| JsValue::from_str(&format!("Failed to open file: {}", e)))?;
+                let file_size = reader.file_size()
+                    .map_err(|e| JsValue::from_str(&format!("Failed to get file size: {}", e)))?;
 
                 // Calculate actual block size
                 let actual_block_size = if block_size == 0 { processor.get_recommended_block_size(file_size) } else { block_size };
@@ -86,11 +86,16 @@ pub mod browser_wasm {
             let processor = self.processor.clone();
 
             future_to_promise(async move {
-                // Create output directory
-                create_dir_all_async(&output_dir).await?;
+                // Create output directory using the new DirManager trait
+                let dir_manager = get_dir_manager();
+                dir_manager.create_dir_all(&output_dir)
+                    .map_err(|e| JsValue::from_str(&format!("Failed to create directory: {}", e)))?;
 
-                // Get file size
-                let file_size = file_size_async(&input_path).await?;
+                // Get file size using the new FileReader trait
+                let reader = open_file_reader(&input_path)
+                    .map_err(|e| JsValue::from_str(&format!("Failed to open file: {}", e)))?;
+                let file_size = reader.file_size()
+                    .map_err(|e| JsValue::from_str(&format!("Failed to get file size: {}", e)))?;
 
                 // Calculate actual block size
                 let actual_block_size = if block_size == 0 { processor.get_recommended_block_size(file_size) } else { block_size };
@@ -132,7 +137,7 @@ pub mod browser_wasm {
             "RaptorQ Library v0.1.0 (WASM Browser Edition)".to_string()
         }
     }
-
+    
     // helpers --------------------------------------------------------------
     use crate::processor::ProcessResult;
 
