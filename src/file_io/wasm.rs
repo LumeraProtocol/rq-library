@@ -25,6 +25,9 @@ extern "C" {
 
     #[wasm_bindgen(js_name = createDirAll)]
     fn js_create_dir_all(path: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen(js_name = syncDirExists)]
+    fn js_dir_exists(path: &str) -> bool;
 }
 
 // Import console.log from web_sys instead of directly binding it
@@ -191,5 +194,14 @@ impl DirManager for BrowserDirManager {
         ).map_err(|e| format!("JS error: {:?}", e))?;
         
         Ok(())
+    }
+
+    fn dir_exists(&self, path: &str) -> Result<bool, String> {
+        // Call the JS function to check directory existence
+        Ok(js_dir_exists(path))
+    }
+
+    fn count_files(&self, path: &str) -> Result<usize, String> {
+        Ok(0) // Placeholder, as counting files in a directory is not implemented
     }
 }

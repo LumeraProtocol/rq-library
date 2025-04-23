@@ -40,6 +40,12 @@ pub trait FileWriter {
 pub trait DirManager {
     /// Recursively creates a directory and all required parent directories.
     fn create_dir_all(&self, path: &str) -> Result<(), String>;
+
+    /// Checks if a directory exists at the given path.
+    fn dir_exists(&self, path: &str) -> Result<bool, String>;
+
+    /// Returns the number of files in the given directory.
+    fn count_files(&self, dir: &std::path::Path) -> std::io::Result<usize>;
 }
 
 /// Opens a platform-appropriate file reader.

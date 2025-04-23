@@ -67,4 +67,21 @@ impl DirManager for NativeDirManager {
     fn create_dir_all(&self, path: &str) -> Result<(), String> {
         std::fs::create_dir_all(Path::new(path)).map_err(|e| e.to_string())
     }
+
+    fn dir_exists(&self, path: &str) -> Result<bool, String> {
+        Ok(std::fs::metadata(path)
+            .map(|m| m.is_dir())
+            .unwrap_or(false))
+    }
+
+    fn count_files(&self, dir: &std::path::Path) -> std::io::Result<usize> {
+        let mut count = 0;
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            if entry.path().is_file() {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
 }

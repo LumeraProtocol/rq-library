@@ -173,6 +173,8 @@ extern Promise js_flush_file(const str *path);
 
 extern Promise js_create_dir_all(const str *path);
 
+extern bool js_dir_exists(const str *path);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

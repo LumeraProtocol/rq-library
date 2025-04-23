@@ -396,7 +396,7 @@ pub extern "C" fn raptorq_get_recommended_block_size(
         None => return 0,
     };
 
-    processor.get_recommended_block_size(file_size)
+    processor.get_recommended_block_size(file_size as usize)
 }
 
 /// Version information
