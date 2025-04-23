@@ -35,10 +35,19 @@ jobs:
         id: changed-files
         run: |
           cd source-repo
-          # Get the list of changed files in the dist/lib and include directories
-          # Get the list of changed files between the previous and current commit in the push
-          CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} | grep -E '^(dist/lib/|include/)' || true)
-          echo "Changed files: $CHANGED_FILES"
+          echo "GITHUB_EVENT_BEFORE: ${{ github.event.before }}"
+          echo "GITHUB_EVENT_AFTER: ${{ github.event.after }}"
+
+          # Get the raw list of changed files between the SHAs
+          RAW_DIFF_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} || true)
+          echo "--- Raw git diff output ---"
+          echo "$RAW_DIFF_FILES"
+          echo "--- End raw git diff output ---"
+
+          # Filter the raw list for the target paths
+          CHANGED_FILES=$(echo "$RAW_DIFF_FILES" | grep -E '^(dist/lib/|include/)' || true)
+
+          echo "Filtered changed files: $CHANGED_FILES"
           echo "CHANGED_FILES<<EOF" >> $GITHUB_ENV
           echo "$CHANGED_FILES" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
