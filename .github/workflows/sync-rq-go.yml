@@ -35,7 +35,8 @@ jobs:
         run: |
           cd source-repo
           # Get the list of changed files in the dist/lib and include directories
-          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep -E '^(dist/lib/|include/)' || true)
+          # Get the list of changed files between the previous and current commit in the push
+          CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} | grep -E '^(dist/lib/|include/)' || true)
           echo "Changed files: $CHANGED_FILES"
           echo "CHANGED_FILES<<EOF" >> $GITHUB_ENV
           echo "$CHANGED_FILES" >> $GITHUB_ENV
