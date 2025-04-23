@@ -74,10 +74,14 @@ impl DirManager for NativeDirManager {
             .unwrap_or(false))
     }
 
-    fn count_files(&self, dir: &std::path::Path) -> std::io::Result<usize> {
+    fn count_files(&self, path: &str) -> Result<usize, String> {
+        let dir = Path::new(path);
         let mut count = 0;
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
+        let entries = std::fs::read_dir(dir)
+            .map_err(|e| format!("Failed to read directory: {}", e))?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("Failed to access directory entry: {}", e))?;
             if entry.path().is_file() {
                 count += 1;
             }

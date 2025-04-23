@@ -69,7 +69,7 @@ pub mod browser_wasm {
                     .map_err(|e| JsValue::from_str(&format!("Failed to get file size: {}", e)))?;
 
                 // Calculate actual block size
-                let actual_block_size = if block_size == 0 { processor.get_recommended_block_size(file_size) } else { block_size };
+                let actual_block_size = if block_size == 0 { processor.get_recommended_block_size(file_size as usize) } else { block_size };
 
                 // Call the new create_metadata method
                 let result = processor
@@ -98,7 +98,7 @@ pub mod browser_wasm {
                     .map_err(|e| JsValue::from_str(&format!("Failed to get file size: {}", e)))?;
 
                 // Calculate actual block size
-                let actual_block_size = if block_size == 0 { processor.get_recommended_block_size(file_size) } else { block_size };
+                let actual_block_size = if block_size == 0 { processor.get_recommended_block_size(file_size as usize) } else { block_size };
 
                 // Use generic encode_file method instead of browser-specific versions
                 let result = processor
@@ -128,7 +128,7 @@ pub mod browser_wasm {
         // Get recommended block size
         #[wasm_bindgen]
         pub fn get_recommended_block_size(&self, file_size: f64) -> usize {
-            self.processor.get_recommended_block_size(file_size as u64)
+            self.processor.get_recommended_block_size(file_size as usize)
         }
 
         // Get version

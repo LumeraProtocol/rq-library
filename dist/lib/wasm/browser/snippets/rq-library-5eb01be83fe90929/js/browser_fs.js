@@ -220,3 +220,23 @@ export async function createDirAll(path) {
         localStorage.setItem('directories', JSON.stringify(dirs));
     }
 }
+
+/**
+ * Synchronous wrapper for checking if a directory exists (called from Rust)
+ * @param {string} path - Directory path
+ * @returns {boolean} - True if directory exists, false otherwise
+ */
+window.syncDirExists = function(path) {
+    const dirs = JSON.parse(localStorage.getItem('directories') || '[]');
+    return dirs.includes(path);
+};
+
+/**
+ * Check if a directory exists (async version)
+ * @param {string} path - Directory path to check
+ * @returns {Promise<boolean>}
+ */
+export async function dirExists(path) {
+    const dirs = JSON.parse(localStorage.getItem('directories') || '[]');
+    return dirs.includes(path);
+}

@@ -45,7 +45,7 @@ pub trait DirManager {
     fn dir_exists(&self, path: &str) -> Result<bool, String>;
 
     /// Returns the number of files in the given directory.
-    fn count_files(&self, dir: &std::path::Path) -> std::io::Result<usize>;
+    fn count_files(&self, path: &str) -> Result<usize, String>;
 }
 
 /// Opens a platform-appropriate file reader.

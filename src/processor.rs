@@ -1079,6 +1079,7 @@ mod tests {
 
     fn count_files_in_dir(dir: &Path) -> usize {
         let dir_manager = file_io::get_dir_manager();
+        let dir = dir.to_string_lossy().to_string();
         dir_manager.count_files(&dir).unwrap()
     }
 

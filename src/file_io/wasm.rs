@@ -201,7 +201,7 @@ impl DirManager for BrowserDirManager {
         Ok(js_dir_exists(path))
     }
 
-    fn count_files(&self, path: &str) -> Result<usize, String> {
+    fn count_files(&self, _path: &str) -> Result<usize, String> {
         Ok(0) // Placeholder, as counting files in a directory is not implemented
     }
 }

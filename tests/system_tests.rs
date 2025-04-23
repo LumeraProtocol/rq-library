@@ -69,6 +69,7 @@ struct TestContext {
     temp_dir: TempDir,
     input_file: PathBuf,
     symbols_dir: PathBuf,
+    layout_file_dir: PathBuf,
     output_file: PathBuf,
 }
 
@@ -79,10 +80,11 @@ impl TestContext {
         let input_file = temp_dir.path().join("input.bin");
         let symbols_dir = temp_dir.path().join("symbols");
         let output_file = temp_dir.path().join("output.bin");
+        let layout_file_dir = temp_dir.path().to_path_buf();
         
         // Create symbols directory
-        fs::create_dir_all(&symbols_dir)?;
-        
+        // fs::create_dir_all(&symbols_dir)?;
+        //
         // Generate random input file
         generate_random_file(&input_file, file_size_bytes)?;
         
@@ -91,6 +93,7 @@ impl TestContext {
             input_file,
             symbols_dir,
             output_file,
+            layout_file_dir,
         })
     }
     
@@ -102,6 +105,10 @@ impl TestContext {
     /// Get symbols directory path as string
     fn symbols_path(&self) -> String {
         self.symbols_dir.to_string_lossy().into_owned()
+    }
+
+    fn layout_path(&self) -> String {
+        self.layout_file_dir.to_string_lossy().into_owned()
     }
     
     /// Get output file path as string
@@ -474,7 +481,7 @@ fn test_create_metadata(
     // Create metadata without saving symbols
     let result = processor.create_metadata(
         &ctx.input_path(),
-        &ctx.symbols_path(),
+        &ctx.layout_path(),
         block_size,
         return_layout
     ).expect("Failed to create metadata");
@@ -498,7 +505,7 @@ fn test_create_metadata(
     }
     
     // Verify symbols were not created
-    let symbol_dirs_exist = std::fs::read_dir(&ctx.symbols_path())
+    let symbol_dirs_exist = std::fs::read_dir(&ctx.layout_path())
         .unwrap()
         .filter_map(Result::ok)
         .any(|entry| {
@@ -506,28 +513,11 @@ fn test_create_metadata(
             path.is_dir() && path.file_name().unwrap().to_str().unwrap().starts_with("block_")
         });
     
-    assert!(symbol_dirs_exist, "Block directories should be created");
-    
-    // Check that no symbols were created
-    let mut symbols_found = false;
-    for block_dir in std::fs::read_dir(&ctx.symbols_path()).unwrap()
-                            .filter_map(Result::ok)
-                            .filter(|entry| entry.path().is_dir() &&
-                                entry.file_name().to_str().unwrap().starts_with("block_")) {
-        
-        for entry in std::fs::read_dir(block_dir.path()).unwrap().filter_map(Result::ok) {
-            if entry.path().is_file() && entry.file_name() != "_raptorq_layout.json" {
-                symbols_found = true;
-                break;
-            }
-        }
-    }
-    
-    assert!(!symbols_found, "No symbol files should be created when using create_metadata");
+    assert!(!symbol_dirs_exist, "Block directories should NOT be created");
     
     // If we're returning the layout content directly, let's save it to disk for the decoding test
     let layout_path = if return_layout {
-        let layout_path = Path::new(&ctx.symbols_path()).join("_raptorq_layout.json");
+        let layout_path = Path::new(&ctx.layout_path()).join("_raptorq_layout.json");
         let layout_content = result.layout_content.unwrap();
         std::fs::write(&layout_path, layout_content)?;
         layout_path
@@ -626,7 +616,7 @@ fn test_sys_error_handling_create_metadata() {
     
     let result = processor.create_metadata(
         &non_existent_file.to_string_lossy(),
-        &ctx.symbols_path(),
+        &ctx.layout_path(),
         0,
         false
     );
