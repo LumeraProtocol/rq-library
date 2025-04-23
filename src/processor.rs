@@ -227,12 +227,24 @@ impl RaptorQProcessor {
     ///
     /// * `Ok(ProcessResult)` with the layout information
     /// * `Err(ProcessError)` on failure
+    /// Create metadata for a file without generating symbols
+    ///
+    /// This method calculates symbol IDs and creates a layout file if `layout_file` is non-empty,
+    /// or returns the layout as an object if `layout_file` is an empty string.
+    ///
+    /// # Arguments
+    /// * `input_path` - Path to the input file
+    /// * `layout_file` - Path to the output layout file (if empty, returns layout as object)
+    /// * `block_size` - Size of blocks to process at once (0 = auto)
+    ///
+    /// # Returns
+    /// * `Ok(ProcessResult)` with the layout information
+    /// * `Err(ProcessError)` on failure
     pub fn create_metadata(
         &self,
         input_path: &str,
-        output_dir: &str,
+        layout_file: &str,
         block_size: usize,
-        return_layout: bool,
     ) -> Result<ProcessResult, ProcessError> {
         // Prepare for processing
         let (file_reader, file_size, actual_block_size) = self.prepare_processing(
@@ -240,18 +252,22 @@ impl RaptorQProcessor {
             block_size,
             false, // We don't force single file for metadata creation
         )?;
-        
-        debug!("Creating metadata for file: {:?} ({}B) with block size {}B",
-               input_path, file_size, actual_block_size);
-                
-        // Process file blocks but with the metadata_only flag set to true
+
+        debug!(
+            "Creating metadata for file: {:?} ({}B) with block size {}B",
+            input_path, file_size, actual_block_size
+        );
+
+        // If layout_file is empty, return layout as object; else, write to file
+        let return_layout = layout_file.is_empty();
         self.process_file_blocks(
             file_reader,
-            output_dir,
+            "", // output_dir is not used for metadata-only
             actual_block_size,
             file_size,
             true, // metadata_only = true
             return_layout,
+            layout_file,
         )
     }
 
@@ -269,10 +285,15 @@ impl RaptorQProcessor {
             block_size,
             force_single_file,
         )?;
-        
-        debug!("Processing file: {:?} ({}B) with block size {}B",
-               input_path, file_size, actual_block_size);
-                
+
+        debug!(
+            "Processing file: {:?} ({}B) with block size {}B",
+            input_path, file_size, actual_block_size
+        );
+
+        // Generate default layout file path
+        let layout_file = std::path::Path::new(output_dir).join(LAYOUT_FILENAME).to_string_lossy().to_string();
+
         // Process file blocks - create actual symbols
         self.process_file_blocks(
             file_reader,
@@ -281,6 +302,7 @@ impl RaptorQProcessor {
             file_size,
             false, // metadata_only = false
             false, // return_layout = false
+            &layout_file,
         )
     }
 
@@ -341,6 +363,9 @@ impl RaptorQProcessor {
     /// Process file blocks for encoding or metadata creation
     ///
     /// This method handles both creating actual symbols or just generating metadata
+    /// Process file blocks for encoding or metadata creation.
+    /// If `metadata_only` is true, only layout is created (no symbols written).
+    /// If `return_layout` is true, returns layout as object; else, writes to the specified file.
     fn process_file_blocks(
         &self,
         mut source_reader: Box<dyn FileReader>,
@@ -349,17 +374,9 @@ impl RaptorQProcessor {
         total_size: usize,
         metadata_only: bool,
         return_layout: bool,
+        layout_file: &str,
     ) -> Result<ProcessResult, ProcessError> {
         let dir_manager = file_io::get_dir_manager();
-
-        // Ensure output directory exists
-        // if !return_layout {
-        //     let exists = dir_manager.dir_exists(output_dir)
-        //         .map_err(|e| ProcessError::IOError(io::Error::new(io::ErrorKind::Other, e)))?;
-        //     if !exists {
-        //         return Err(ProcessError::InvalidPath(format!("Output directory does not exist: {}", output_dir)));
-        //     }
-        // }
 
         let base_output_path = Path::new(output_dir);
 
@@ -369,7 +386,7 @@ impl RaptorQProcessor {
         } else {
             (total_size as f64 / block_size as f64).ceil() as usize
         };
-        
+
         debug!("File will be split into {} blocks", block_count);
 
         // Process each block
@@ -381,7 +398,7 @@ impl RaptorQProcessor {
         for block_index in 0..block_count {
             let block_id = block_index;
             let block_dir = base_output_path.join(format!("block_{}", block_index));
-            if !metadata_only {
+            if !metadata_only && !output_dir.is_empty() {
                 let block_dir_path = block_dir.to_string_lossy().to_string();
                 dir_manager.create_dir_all(&block_dir_path).map_err(|e| {
                     ProcessError::IOError(io::Error::new(io::ErrorKind::Other, e))
@@ -397,12 +414,15 @@ impl RaptorQProcessor {
             let repair_symbols = self.calculate_repair_symbols(actual_block_size as u64);
             total_repair_symbols += repair_symbols;
 
-            debug!("Processing block {} of {} bytes at offset {}",
-                   block_index, actual_block_size, actual_offset);
+            debug!(
+                "Processing block {} of {} bytes at offset {}",
+                block_index, actual_block_size, actual_offset
+            );
 
             // Read this block into memory directly
             let mut block_data = vec![0u8; actual_block_size];
-            source_reader.read_chunk(actual_offset, &mut block_data)
+            source_reader
+                .read_chunk(actual_offset, &mut block_data)
                 .map_err(|e| ProcessError::IOError(io::Error::new(io::ErrorKind::Other, e)))?;
 
             // Process this block
@@ -436,7 +456,6 @@ impl RaptorQProcessor {
             });
 
             total_symbols_count += symbol_ids.len() as u64;
-            
             // No need to seek - we'll just read the next block at its offset
         }
 
@@ -455,43 +474,40 @@ impl RaptorQProcessor {
             }
         };
 
-        // If return_layout is true, we don't write to file but include in a result
         let layout_path_str;
-        let layout_path;
-        
-        if !return_layout {
-            // Save layout information to the output directory
-            layout_path = base_output_path.join(LAYOUT_FILENAME);
+        let symbols_directory = output_dir.to_string();
+        if !return_layout && !layout_file.is_empty() {
+            // Save layout information to the specified file
+            let layout_path = Path::new(layout_file);
             layout_path_str = layout_path.to_string_lossy().to_string();
-
             let mut writer = file_io::open_file_writer(&layout_path_str)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            writer.write_chunk(0, layout_json.as_bytes())
+            writer
+                .write_chunk(0, layout_json.as_bytes())
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            writer.flush()
+            writer
+                .flush()
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-
             debug!("Saved the layout file at {:?}", layout_path);
         } else {
-            // For browser environments that can't write files, we use a virtual path
-            layout_path_str = format!("{}/{}", output_dir, LAYOUT_FILENAME);
-            debug!("Layout file (virtual): {}", layout_path_str);
+            // Return layout as object, no file written
+            layout_path_str = String::new();
         }
 
         let mut result = ProcessResult {
             total_symbols_count,
             total_repair_symbols,
-            symbols_directory: output_dir.to_string(),
+            symbols_directory,
             blocks: Some(blocks),
             layout_file_path: layout_path_str,
             layout_content: None,
         };
-        
+
         // If we're returning the layout directly, include it in the result
         if return_layout {
             result.layout_content = Some(layout_json);
         }
-        
+
         Ok(result)
     }
 
@@ -2393,11 +2409,11 @@ mod tests {
         // Create metadata without writing symbols
         // Using the "root" directory for the layout file - 
         // WE ARE NOT CREATING NESTED DIRECTORIES FOR LAYOUT FILE!!!
+        let layout_file_path = temp_path.join("_raptorq_layout.json");
         let result = processor.create_metadata(
             input_file_path.to_str().unwrap(),
-            temp_path.to_str().unwrap(),
+            layout_file_path.to_str().unwrap(),
             0, // auto block size
-            false, // write the layout file
         ).unwrap();
         
         // Verify the layout file exists
@@ -2439,9 +2455,8 @@ mod tests {
         // Create metadata and return layout content
         let result = processor.create_metadata(
             input_file_path.to_str().unwrap(),
-            output_dir_path.to_str().unwrap(),
+            "", // empty string: return layout as object
             0, // auto block size
-            true, // return layout content
         ).unwrap();
         
         // Verify layout content is returned

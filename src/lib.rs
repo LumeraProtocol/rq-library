@@ -90,14 +90,13 @@ pub extern "C" fn raptorq_free_session(session_id: usize) -> bool {
 pub extern "C" fn raptorq_create_metadata(
     session_id: usize,
     input_path: *const c_char,
-    output_dir: *const c_char,
+    layout_file: *const c_char,
     block_size: usize,
-    return_layout: bool,
     result_buffer: *mut c_char,
     result_buffer_len: usize,
 ) -> i32 {
     // Basic null pointer checks
-    if input_path.is_null() || output_dir.is_null() || result_buffer.is_null() {
+    if input_path.is_null() || layout_file.is_null() || result_buffer.is_null() {
         return -2;
     }
 
@@ -106,7 +105,7 @@ pub extern "C" fn raptorq_create_metadata(
         Err(_) => return -2,
     };
 
-    let output_dir_str = match unsafe { CStr::from_ptr(output_dir) }.to_str() {
+    let layout_file_str = match unsafe { CStr::from_ptr(layout_file) }.to_str() {
         Ok(s) => s,
         Err(_) => return -2,
     };
@@ -117,7 +116,7 @@ pub extern "C" fn raptorq_create_metadata(
         None => return -5,
     };
 
-    match processor.create_metadata(input_path_str, output_dir_str, block_size, return_layout) {
+    match processor.create_metadata(input_path_str, layout_file_str, block_size) {
         Ok(result) => {
             // Serialize result to JSON
             let result_json = match serde_json::to_string(&result) {
@@ -1169,9 +1168,8 @@ mod ffi_tests {
             let result = raptorq_create_metadata(
                 session_id,
                 CString::new(input_path.to_str().unwrap()).unwrap().as_ptr(),
-                CString::new(output_dir.to_str().unwrap()).unwrap().as_ptr(),
+                CString::new(output_dir.join("_raptorq_layout.json").to_str().unwrap()).unwrap().as_ptr(),
                 0,
-                false, // Don't return layout, write to file
                 result_buffer.as_mut_ptr() as *mut c_char,
                 result_buffer.len(),
             );
@@ -1211,9 +1209,8 @@ mod ffi_tests {
             let result = raptorq_create_metadata(
                 session_id,
                 CString::new(input_path.to_str().unwrap()).unwrap().as_ptr(),
-                CString::new(output_dir.to_str().unwrap()).unwrap().as_ptr(),
+                CString::new("").unwrap().as_ptr(), // empty string: return layout as object
                 0,
-                true, // Return layout content instead of writing to file
                 result_buffer.as_mut_ptr() as *mut c_char,
                 result_buffer.len(),
             );
@@ -1242,9 +1239,8 @@ mod ffi_tests {
             let result = raptorq_create_metadata(
                 session_id,
                 ptr::null(),
-                CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
+                CString::new(temp_dir.path().join("_raptorq_layout.json").to_str().unwrap()).unwrap().as_ptr(),
                 0,
-                false,
                 result_buffer.as_mut_ptr() as *mut c_char,
                 result_buffer.len(),
             );
@@ -1256,7 +1252,6 @@ mod ffi_tests {
                 CString::new("input.txt").unwrap().as_ptr(),
                 ptr::null(),
                 0,
-                false,
                 result_buffer.as_mut_ptr() as *mut c_char,
                 result_buffer.len(),
             );
@@ -1266,9 +1261,8 @@ mod ffi_tests {
             let result = raptorq_create_metadata(
                 session_id,
                 CString::new("input.txt").unwrap().as_ptr(),
-                CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
+                CString::new(temp_dir.path().join("_raptorq_layout.json").to_str().unwrap()).unwrap().as_ptr(),
                 0,
-                false,
                 ptr::null_mut(),
                 result_buffer.len(),
             );
@@ -1279,9 +1273,8 @@ mod ffi_tests {
             let result = raptorq_create_metadata(
                 invalid_session_id,
                 CString::new("input.txt").unwrap().as_ptr(),
-                CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
+                CString::new(temp_dir.path().join("_raptorq_layout.json").to_str().unwrap()).unwrap().as_ptr(),
                 0,
-                false,
                 result_buffer.as_mut_ptr() as *mut c_char,
                 result_buffer.len(),
             );

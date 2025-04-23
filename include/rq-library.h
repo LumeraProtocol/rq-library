@@ -61,9 +61,8 @@ bool raptorq_free_session(uintptr_t session_id);
  */
 int32_t raptorq_create_metadata(uintptr_t session_id,
                                 const char *input_path,
-                                const char *output_dir,
+                                const char *layout_file,
                                 uintptr_t block_size,
-                                bool return_layout,
                                 char *result_buffer,
                                 uintptr_t result_buffer_len);
 

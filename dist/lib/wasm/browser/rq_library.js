@@ -205,11 +205,11 @@ export function start() {
 }
 
 function __wbg_adapter_24(arg0, arg1, arg2) {
-    wasm.closure859_externref_shim(arg0, arg1, arg2);
+    wasm.closure858_externref_shim(arg0, arg1, arg2);
 }
 
 function __wbg_adapter_60(arg0, arg1, arg2, arg3) {
-    wasm.closure881_externref_shim(arg0, arg1, arg2, arg3);
+    wasm.closure880_externref_shim(arg0, arg1, arg2, arg3);
 }
 
 const RaptorQSessionFinalization = (typeof FinalizationRegistry === 'undefined')
@@ -243,17 +243,16 @@ export class RaptorQSession {
     }
     /**
      * @param {string} input_path
-     * @param {string} output_dir
+     * @param {string} layout_file
      * @param {number} block_size
-     * @param {boolean} return_layout
      * @returns {Promise<any>}
      */
-    create_metadata(input_path, output_dir, block_size, return_layout) {
+    create_metadata(input_path, layout_file, block_size) {
         const ptr0 = passStringToWasm0(input_path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(output_dir, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr1 = passStringToWasm0(layout_file, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.raptorqsession_create_metadata(this.__wbg_ptr, ptr0, len0, ptr1, len1, block_size, return_layout);
+        const ret = wasm.raptorqsession_create_metadata(this.__wbg_ptr, ptr0, len0, ptr1, len1, block_size);
         return ret;
     }
     /**
@@ -509,8 +508,8 @@ function __wbg_get_imports() {
         const ret = false;
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper1751 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 860, __wbg_adapter_24);
+    imports.wbg.__wbindgen_closure_wrapper1750 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 859, __wbg_adapter_24);
         return ret;
     };
     imports.wbg.__wbindgen_debug_string = function(arg0, arg1) {

@@ -477,33 +477,34 @@ fn test_create_metadata(
 ) -> std::io::Result<bool> {
     // Create test context with input file
     let ctx = TestContext::new(file_size_bytes)?;
-    
+
     // Create metadata without saving symbols
+    let layout_file = if return_layout {
+        "".to_string()
+    } else {
+        // Always use a file named _raptorq_layout.json in the layout_path directory
+        let layout_path = Path::new(&ctx.layout_path()).join("_raptorq_layout.json");
+        let layout_path_str = layout_path.to_string_lossy().to_string();
+        layout_path_str
+    };
     let result = processor.create_metadata(
         &ctx.input_path(),
-        &ctx.layout_path(),
-        block_size,
-        return_layout
+        &layout_file,
+        block_size
     ).expect("Failed to create metadata");
-    
-    // Verify layout file path is returned
-    assert!(!result.layout_file_path.is_empty(), "Layout file path should not be empty");
-    
+
     // Check if layout_content is returned when return_layout is true
     if return_layout {
         assert!(result.layout_content.is_some(), "Layout content should be present when return_layout is true");
-        
         // Verify layout file doesn't exist on disk
-        let layout_path = Path::new(&result.layout_file_path);
-        assert!(!layout_path.exists(), "Layout file should not exist on disk when return_layout is true");
+        assert!(result.layout_file_path.is_empty(), "Layout file path should be empty when returning layout as object");
     } else {
         assert!(result.layout_content.is_none(), "Layout content should be None when return_layout is false");
-        
         // Verify layout file exists on disk
         let layout_path = Path::new(&result.layout_file_path);
         assert!(layout_path.exists(), "Layout file should exist on disk");
     }
-    
+
     // Verify symbols were not created
     let symbol_dirs_exist = std::fs::read_dir(&ctx.layout_path())
         .unwrap()
@@ -512,19 +513,19 @@ fn test_create_metadata(
             let path = entry.path();
             path.is_dir() && path.file_name().unwrap().to_str().unwrap().starts_with("block_")
         });
-    
+
     assert!(!symbol_dirs_exist, "Block directories should NOT be created");
-    
+
     // If we're returning the layout content directly, let's save it to disk for the decoding test
     let layout_path = if return_layout {
         let layout_path = Path::new(&ctx.layout_path()).join("_raptorq_layout.json");
-        let layout_content = result.layout_content.unwrap();
+        let layout_content = result.layout_content.clone().unwrap();
         std::fs::write(&layout_path, layout_content)?;
         layout_path
     } else {
         Path::new(&result.layout_file_path).to_path_buf()
     };
-    
+
     // Now that we have metadata, let's encode the file normally to get symbols
     let _ = processor.encode_file(
         &ctx.input_path(),
@@ -532,14 +533,14 @@ fn test_create_metadata(
         block_size,
         false
     ).expect("Failed to encode file");
-    
+
     // Then decode using the metadata layout
     processor.decode_symbols(
         &ctx.symbols_path(),
         &ctx.output_path(),
         &layout_path.to_string_lossy()
     ).expect("Failed to decode symbols with metadata layout");
-    
+
     // Verify the decoded file matches the original
     ctx.verify_files_match()
 }
@@ -614,11 +615,11 @@ fn test_sys_error_handling_create_metadata() {
     // Try to create metadata for a non-existent file
     let non_existent_file = ctx.temp_dir.path().join("does_not_exist.bin");
     
+    let layout_file = Path::new(&ctx.layout_path()).join("_raptorq_layout.json");
     let result = processor.create_metadata(
         &non_existent_file.to_string_lossy(),
-        &ctx.layout_path(),
-        0,
-        false
+        &layout_file.to_string_lossy(),
+        0
     );
     
     // Verify error is reported correctly

@@ -50,18 +50,13 @@ pub mod browser_wasm {
 
         // Create metadata (layout) without generating symbols
         #[wasm_bindgen]
-        pub fn create_metadata(&self, input_path: String, output_dir: String, block_size: usize, return_layout: bool) -> Promise {
+        pub fn create_metadata(&self, input_path: String, layout_file: String, block_size: usize) -> Promise {
             let processor = self.processor.clone();
 
             future_to_promise(async move {
-                log_to_console(&format!("create_metadata called with input_path='{}', output_dir='{}', block_size={}, return_layout={}",
-                    input_path, output_dir, block_size, return_layout));
+                log_to_console(&format!("create_metadata called with input_path='{}', layout_file='{}', block_size={}",
+                    input_path, layout_file, block_size));
                     
-                // Create output directory using the new DirManager trait
-                let dir_manager = get_dir_manager();
-                dir_manager.create_dir_all(&output_dir)
-                    .map_err(|e| JsValue::from_str(&format!("Failed to create directory: {}", e)))?;
-
                 // Get file size using the new FileReader trait
                 let reader = open_file_reader(&input_path)
                     .map_err(|e| JsValue::from_str(&format!("Failed to open file: {}", e)))?;
@@ -73,7 +68,7 @@ pub mod browser_wasm {
 
                 // Call the new create_metadata method
                 let result = processor
-                    .create_metadata(&input_path, &output_dir, actual_block_size, return_layout)
+                    .create_metadata(&input_path, &layout_file, actual_block_size)
                     .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
                 Ok(build_result_object(&result)?)
