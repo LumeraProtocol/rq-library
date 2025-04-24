@@ -11,10 +11,6 @@ symphony-rq-library
 *.exe
 *.test
 *.out
-*.so
-*.dylib
-*.dll
-*.a
 
 # Explicitly track bindings/lib directory
 !/bindings/lib/*.so
