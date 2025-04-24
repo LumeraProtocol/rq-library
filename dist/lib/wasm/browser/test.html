@@ -48,6 +48,7 @@
     <div>
         <button id="testFileIO">Test File I/O</button>
         <button id="testDirManager">Test Directory Manager</button>
+        <button id="testEncodeDecode">Test Encode/Decode</button>
         <button id="clearStorage">Clear Storage</button>
     </div>
     
@@ -65,6 +66,9 @@
             console.log(message);
         }
         
+        // No need to define filesystem helper functions here
+        // They are now imported from browser_fs.js at the expected path
+        
         // Wait for the WASM module to load
         async function initWasm() {
             try {
@@ -72,19 +76,68 @@
                 
                 // Initialize storage
                 if (!localStorage.getItem('directories')) {
-                    localStorage.setItem('directories', JSON.stringify([]));
+                    // Initialize with root directory already created
+                    localStorage.setItem('directories', JSON.stringify(['/']));
+                } else {
+                    // Make sure root directory exists
+                    const dirs = JSON.parse(localStorage.getItem('directories'));
+                    if (!dirs.includes('/')) {
+                        dirs.push('/');
+                        localStorage.setItem('directories', JSON.stringify(dirs));
+                    }
                 }
                 
-                // Load the module (adjust path if needed)
-                const rqModule = await import('./rq_library.js');
-                window.rq = await rqModule.default();
-                
-                log("WASM module loaded successfully!");
-                log(`Version: ${window.rq.version()}`);
+                try {
+                    // Load the RaptorQ WASM module
+                    log("Importing rq_library.js...");
+                    // Import the module containing exports like RaptorQSession and the default init function
+                    window.rqModule = await import('./rq_library.js');
+                    log(`rqModule properties: ${Object.keys(window.rqModule).join(', ')}`);
+                    
+                    log("Initializing WASM via default export...");
+                    // The default export initializes WASM and returns the raw exports object
+                    window.rq = await window.rqModule.default();
+                    log(`Initialized WASM exports (window.rq) type: ${typeof window.rq}`);
+                    if (window.rq) {
+                        log(`window.rq properties (raw exports): ${Object.keys(window.rq).join(', ')}`);
+                    }
+                    // The RaptorQSession class is a named export on the module itself
+                    log(`RaptorQSession class found on module: ${typeof window.rqModule.RaptorQSession === 'function'}`);
+                    
+                    log("WASM module loaded successfully!");
+                    
+                    // Get the version using the static method provided by the JS bindings
+                    try {
+                        // Access the class via the imported module object
+                        if (window.rqModule && window.rqModule.RaptorQSession && typeof window.rqModule.RaptorQSession.version === 'function') {
+                            // This static method handles WASM memory allocation and string decoding.
+                            const version = window.rqModule.RaptorQSession.version();
+                            log(`Version (using rqModule.RaptorQSession.version): ${version}`);
+                        } else {
+                            log("Static method rqModule.RaptorQSession.version not found.");
+                            if (window.rqModule) {
+                                log(`Available rqModule properties: ${Object.keys(window.rqModule).join(', ')}`);
+                            }
+                             if (window.rq) {
+                                log(`Available window.rq properties (raw exports): ${Object.keys(window.rq).join(', ')}`);
+                            }
+                        }
+                    } catch (versionError) {
+                        log(`Error getting version via RaptorQSession.version: ${versionError.message}`);
+                        console.error("Version error details:", versionError);
+                    }
+                } catch (err) {
+                    log(`Error during WASM initialization: ${err.message}`);
+                    if (err.stack) {
+                        log(`Stack trace: ${err.stack}`);
+                    }
+                    throw err; // Re-throw to outer catch
+                }
                 
                 // Enable buttons
                 document.getElementById('testFileIO').disabled = false;
                 document.getElementById('testDirManager').disabled = false;
+                document.getElementById('testEncodeDecode').disabled = false;
                 
                 // Set up event listeners
                 setupListeners();
@@ -106,13 +159,34 @@
                         const buffer = await file.arrayBuffer();
                         const data = new Uint8Array(buffer);
                         
+                        // Convert to base64 safely (handling large files)
+                        let base64Data = '';
+                        const chunk = 8192;
+                        
+                        // Process the file in chunks
+                        for (let i = 0; i < data.length; i += chunk) {
+                            const sliceData = data.slice(i, i + chunk);
+                            base64Data += btoa(
+                                Array.from(sliceData)
+                                    .map(byte => String.fromCharCode(byte))
+                                    .join('')
+                            );
+                        }
+                        
                         // Store in localStorage for our mock file system
-                        const base64Data = btoa(String.fromCharCode.apply(null, data));
+                        // Use the path format expected by browser_fs.js
                         localStorage.setItem(`file_data:/${file.name}`, base64Data);
                         
                         // Store metadata
                         const metadata = { size: data.length };
                         localStorage.setItem(`file_metadata:/${file.name}`, JSON.stringify(metadata));
+                        
+                        // Make sure the root directory exists
+                        const dirs = JSON.parse(localStorage.getItem('directories') || '[]');
+                        if (!dirs.includes('/')) {
+                            dirs.push('/');
+                            localStorage.setItem('directories', JSON.stringify(dirs));
+                        }
                         
                         log(`File ${file.name} stored in mock filesystem`);
                     } catch (error) {
@@ -124,6 +198,7 @@
             // Test File I/O button
             document.getElementById('testFileIO').addEventListener('click', async () => {
                 try {
+                    log("Starting File I/O test...");
                     const files = JSON.parse(localStorage.getItem('directories') || '[]');
                     const fileKeys = Object.keys(localStorage)
                         .filter(key => key.startsWith('file_data:/'))
@@ -138,19 +213,42 @@
                     log(`Testing file I/O with file: ${testFile}`);
                     
                     // Create a RaptorQ session
-                    const session = new window.rq.RaptorQSession(1024, 10, 100, 4);
+                    log("Creating RaptorQSession...");
+                    
+                    let session;
+                    // Use the constructor from the imported module
+                    if (window.rqModule && window.rqModule.RaptorQSession) {
+                        log("Using RaptorQSession constructor from rqModule");
+                        // Ensure BigInts are used for max_memory_mb and concurrency_limit
+                        session = new window.rqModule.RaptorQSession(1024, 10, 100n, 4n);
+                    } else {
+                        // If the class isn't found on the module, something is wrong with the import or bindings
+                        log("ERROR: Cannot find RaptorQSession constructor on rqModule!");
+                         if (window.rqModule) {
+                            log(`Available rqModule properties: ${Object.keys(window.rqModule).join(', ')}`);
+                         }
+                        throw new Error("Cannot create RaptorQ session - Constructor not found");
+                    }
                     
                     // Use file operations
                     log("Creating metadata...");
                     const outputDir = "/output";
                     
                     // Test file operations through the encoded metadata
-                    const metadata = await session.create_metadata(testFile, outputDir, 0, true);
+                    // Updated to match the API signature in rq_library.js (3 parameters instead of 4)
+                    const metadata = await session.create_metadata(testFile, outputDir, 0);
                     
                     log(`Metadata created successfully!`);
-                    log(`Symbols directory: ${metadata.symbolsDirectory}`);
-                    log(`Layout file path: ${metadata.layoutFilePath}`);
-                    log(`Total symbols: ${metadata.totalSymbolsCount}`);
+                    // Log metadata based on its actual structure
+                    if (metadata) {
+                        if (metadata.symbolsDirectory) log(`Symbols directory: ${metadata.symbolsDirectory}`);
+                        if (metadata.layoutFilePath) log(`Layout file path: ${metadata.layoutFilePath}`);
+                        if (metadata.totalSymbolsCount) log(`Total symbols: ${metadata.totalSymbolsCount}`);
+                        // Fallback if properties change
+                        if (!metadata.symbolsDirectory && !metadata.layoutFilePath && !metadata.totalSymbolsCount) {
+                            log(`Metadata details: ${JSON.stringify(metadata)}`);
+                        }
+                    }
                     
                 } catch (error) {
                     log(`Error testing file I/O: ${error.message}`);
@@ -163,14 +261,83 @@
                 try {
                     const testDir = "/test/directory/path";
                     
-                    // This will use our DirManager to create directories
+                    log(`Creating directory structure: ${testDir}`);
+                    // Use the syncCreateDirAll function exposed by browser_fs.js
                     window.syncCreateDirAll(testDir);
                     
+                    // Check if it exists
+                    const exists = window.syncDirExists(testDir);
+                    log(`Directory exists check: ${exists}`);
+                    
+                    // Display all directories
                     const dirs = JSON.parse(localStorage.getItem('directories') || '[]');
-                    log(`Directories: ${JSON.stringify(dirs)}`);
+                    log(`All directories: ${JSON.stringify(dirs)}`);
                     
                 } catch (error) {
                     log(`Error testing directory manager: ${error.message}`);
+                }
+            });
+            
+            // Test Encode/Decode button
+            document.getElementById('testEncodeDecode').addEventListener('click', async () => {
+                try {
+                    const fileKeys = Object.keys(localStorage)
+                        .filter(key => key.startsWith('file_data:/'))
+                        .map(key => key.replace('file_data:', ''));
+                    
+                    if (fileKeys.length === 0) {
+                        log("No test files available. Please upload a file first.");
+                        return;
+                    }
+                    
+                    const testFile = fileKeys[0];
+                    log(`Testing encode/decode with file: ${testFile}`);
+                    
+                    // Create a RaptorQ session
+                    log("Creating RaptorQSession for encode/decode test...");
+                    
+                    let session;
+                    // Use the constructor from the imported module
+                     if (window.rqModule && window.rqModule.RaptorQSession) {
+                        log("Using RaptorQSession constructor from rqModule");
+                         // Ensure BigInts are used
+                        session = new window.rqModule.RaptorQSession(1024, 10, 100n, 4n);
+                    } else {
+                         // If the class isn't found on the module, something is wrong with the import or bindings
+                        log("ERROR: Cannot find RaptorQSession constructor on rqModule!");
+                         if (window.rqModule) {
+                            log(`Available rqModule properties: ${Object.keys(window.rqModule).join(', ')}`);
+                         }
+                        throw new Error("Cannot create RaptorQ session - Constructor not found");
+                    }
+                    
+                    // Create output directory
+                    const outputDir = "/encoded_output";
+                    window.syncCreateDirAll(outputDir);
+                    
+                    // Encode the file
+                    log("Encoding file...");
+                    const encodeResult = await session.encode_file(testFile, outputDir, 0);
+                    log(`Encode result: ${JSON.stringify(encodeResult)}`);
+                    
+                    // Decode the file
+                    const decodedFile = "/decoded_output";
+                    log("Decoding file...");
+                    try {
+                        const decodeResult = await session.decode_symbols(
+                            encodeResult.symbolsDirectory,
+                            decodedFile,
+                            encodeResult.layoutFilePath
+                        );
+                        log(`Decode result: ${JSON.stringify(decodeResult)}`);
+                    } catch (decodeError) {
+                        log(`Error during decode: ${decodeError.message}`);
+                        console.error(decodeError);
+                    }
+                    
+                } catch (error) {
+                    log(`Error testing encode/decode: ${error.message}`);
+                    console.error(error);
                 }
             });
             
@@ -193,6 +360,7 @@
             // Disable buttons until WASM is ready
             document.getElementById('testFileIO').disabled = true;
             document.getElementById('testDirManager').disabled = true;
+            document.getElementById('testEncodeDecode').disabled = true;
             
             // Initialize WASM
             initWasm();

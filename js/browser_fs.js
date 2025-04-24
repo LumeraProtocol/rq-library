@@ -17,6 +17,17 @@ export function getFileSize(path) {
     return metadata.size;
 }
 
+/**
+ * Synchronous check if a directory exists (required by WASM module)
+ * @param {string} path - Directory path
+ * @returns {boolean} - True if directory exists, false otherwise
+ */
+export function syncDirExists(path) {
+    console.log(`[JS] Checking if directory exists: ${path}`);
+    const dirs = JSON.parse(localStorage.getItem('directories') || '[]');
+    return dirs.includes(path);
+}
+
 // Add synchronous wrapper functions to the global scope for Rust to call
 
 /**
@@ -223,10 +234,13 @@ export async function createDirAll(path) {
 
 /**
  * Synchronous wrapper for checking if a directory exists (called from Rust)
+ * This is kept for backward compatibility; the named export is the preferred method.
+ * 
  * @param {string} path - Directory path
  * @returns {boolean} - True if directory exists, false otherwise
  */
 window.syncDirExists = function(path) {
+    console.log(`[JS] Window syncDirExists: ${path}`);
     const dirs = JSON.parse(localStorage.getItem('directories') || '[]');
     return dirs.includes(path);
 };
