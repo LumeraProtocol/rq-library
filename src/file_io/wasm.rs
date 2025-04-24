@@ -9,38 +9,57 @@ use std::cell::RefCell;
 use super::{FileReader, FileWriter, DirManager};
 
 /// JS glue for browser file I/O (see browser_fs.js)
-#[wasm_bindgen(module = "/js/browser_fs.js")]
-extern "C" {
-    #[wasm_bindgen(js_name = getFileSize)]
-    fn js_file_size(path: &str) -> u32;
+// Mark this module as not for FFI to prevent cbindgen from including it
+#[cfg(all(target_arch = "wasm32", feature = "browser-wasm"))]
+mod js_bindings {
+    use wasm_bindgen::prelude::*;
+    use js_sys::Uint8Array;
 
-    #[wasm_bindgen(js_name = readFileChunk)]
-    fn js_read_chunk(path: &str, offset: u32, length: u32) -> js_sys::Promise;
+    #[wasm_bindgen(module = "/js/browser_fs.js")]
+    extern "C" {
+        #[wasm_bindgen(js_name = getFileSize)]
+        pub(super) fn js_file_size(path: &str) -> u32;
 
-    #[wasm_bindgen(js_name = writeFileChunk)]
-    fn js_write_chunk(path: &str, offset: u32, data: &Uint8Array) -> js_sys::Promise;
+        #[wasm_bindgen(js_name = readFileChunk)]
+        pub(super) fn js_read_chunk(path: &str, offset: u32, length: u32) -> js_sys::Promise;
 
-    #[wasm_bindgen(js_name = flushFile)]
-    fn js_flush_file(path: &str) -> js_sys::Promise;
+        #[wasm_bindgen(js_name = writeFileChunk)]
+        pub(super) fn js_write_chunk(path: &str, offset: u32, data: &Uint8Array) -> js_sys::Promise;
 
-    #[wasm_bindgen(js_name = createDirAll)]
-    fn js_create_dir_all(path: &str) -> js_sys::Promise;
+        #[wasm_bindgen(js_name = flushFile)]
+        pub(super) fn js_flush_file(path: &str) -> js_sys::Promise;
 
-    #[wasm_bindgen(js_name = syncDirExists)]
-    fn js_dir_exists(path: &str) -> bool;
+        #[wasm_bindgen(js_name = createDirAll)]
+        pub(super) fn js_create_dir_all(path: &str) -> js_sys::Promise;
+
+        #[wasm_bindgen(js_name = syncDirExists)]
+        pub(super) fn js_dir_exists(path: &str) -> bool;
+    }
 }
+
+// Re-export the JS functions for internal use
+#[cfg(all(target_arch = "wasm32", feature = "browser-wasm"))]
+use js_bindings::*;
 
 // Import console.log from web_sys instead of directly binding it
 use web_sys::console;
 
 // Additional JS bindings for filesystem access
-#[wasm_bindgen]
-extern "C" {
-    type FileSystem;
-    
-    #[wasm_bindgen(js_namespace = window, js_name = FileSystem, thread_local_v2)]
-    static FILE_SYSTEM: JsValue;
+#[cfg(all(target_arch = "wasm32", feature = "browser-wasm"))]
+mod js_filesystem {
+    use wasm_bindgen::prelude::*;
+
+    #[wasm_bindgen]
+    extern "C" {
+        pub(super) type FileSystem;
+        
+        #[wasm_bindgen(js_namespace = window, js_name = FileSystem, thread_local_v2)]
+        pub(super) static FILE_SYSTEM: JsValue;
+    }
 }
+
+#[cfg(all(target_arch = "wasm32", feature = "browser-wasm"))]
+use js_filesystem::*;
 
 // Global filesystem access would be provided by the host
 thread_local! {

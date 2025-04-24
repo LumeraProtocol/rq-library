@@ -162,18 +162,6 @@ uintptr_t raptorq_get_recommended_block_size(uintptr_t session_id, uint64_t file
  */
 int32_t raptorq_version(char *version_buffer, uintptr_t version_buffer_len);
 
-extern uint32_t js_file_size(const str *path);
-
-extern Promise js_read_chunk(const str *path, uint32_t offset, uint32_t length);
-
-extern Promise js_write_chunk(const str *path, uint32_t offset, const Uint8Array *data);
-
-extern Promise js_flush_file(const str *path);
-
-extern Promise js_create_dir_all(const str *path);
-
-extern bool js_dir_exists(const str *path);
-
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

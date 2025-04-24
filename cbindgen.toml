@@ -23,7 +23,13 @@ include = [
     "raptorq_get_recommended_block_size",
     "raptorq_version",
 ]
-# Also explicitly exclude functions from platform.rs that are not part of the C FFI
+# Also explicitly exclude functions from platform.rs and wasm.rs that are not part of the C FFI
 exclude = [
-    "log"
+    "log",
+    "js_file_size",
+    "js_read_chunk",
+    "js_write_chunk",
+    "js_flush_file",
+    "js_create_dir_all",
+    "js_dir_exists"
 ]
