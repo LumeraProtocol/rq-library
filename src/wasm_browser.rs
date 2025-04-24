@@ -13,9 +13,7 @@ pub mod browser_wasm {
     use crate::file_io::{get_dir_manager, open_file_reader};
     
     // Import helpers from file_io/wasm module
-    use crate::file_io::wasm::{
-        log_to_console,
-    };
+    use crate::file_io::wasm::log_to_console;
 
     // Initialize panic hook for better error messages
     #[wasm_bindgen(start)]

@@ -1,4 +1,5 @@
-import { getFileSize, readFileChunk, syncDirExists } from './snippets/rq-library-5eb01be83fe90929/js/browser_fs.js';
+// import { getFileSize, readFileChunk, syncDirExists } from './snippets/rq-library-5eb01be83fe90929/js/browser_fs.js';
+import { getFileSize, readFileChunk, syncDirExists } from './snippets/rq-library-5eb01be83fe90929/js/browser_fs_mem.js';
 
 let wasm;
 
