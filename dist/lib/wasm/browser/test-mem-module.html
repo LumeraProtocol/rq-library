@@ -76,6 +76,16 @@
     };
 
     let uploadedFilePath = null;
+    async function getJsonFile(path) {
+      try {
+        const size = getFileSize(path);
+        const bytes = await readFileChunk(path, 0, size);
+        return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+      } catch (error) {
+        console.error('Error reading JSON:', error);
+        return null;
+      }
+    }
 
     async function setupApp() {
       log("Initializing WASM...");
@@ -101,12 +111,14 @@
         if (!uploadedFilePath) return log("Upload a file first.");
         // symbol_size = 64k, redundancy_factor = 10, max_memory_mb = 1024 (1GB), concurrency_limit = 4
         const session = new RaptorQSession(65535, 10, 1024n, 4n);
-        const outDir = "/output";
-        createDirAll(outDir);
+        const outLayoutFile = "/metadata_layout_file.json";
+        // createDirAll(outDir);
 
         log("Creating metadata...");
-        const metadata = await session.create_metadata(uploadedFilePath, outDir, 0);
+        const metadata = await session.create_metadata(uploadedFilePath, outLayoutFile, 0);
         log(`Metadata created: ${JSON.stringify(metadata)}`);
+        const layoutFile = await getJsonFile(outLayoutFile);
+        log(`Layout file: ${JSON.stringify(layoutFile)}`);
       });
 
       document.getElementById('testDirManager').addEventListener('click', () => {
