@@ -45,8 +45,8 @@
   </div>
 
   <div>
-    <button id="testFileIO" disabled>Test File I/O</button>
     <button id="testDirManager" disabled>Test Directory Manager</button>
+    <button id="testMetadata" disabled>Test Create Metadata</button>
     <button id="testEncodeDecode" disabled>Test Encode/Decode</button>
     <button id="clearStorage">Clear Storage</button>
   </div>
@@ -82,7 +82,7 @@
       await initWasm();
       log("WASM initialized.");
 
-      document.getElementById('testFileIO').disabled = false;
+      document.getElementById('testMetadata').disabled = false;
       document.getElementById('testDirManager').disabled = false;
       document.getElementById('testEncodeDecode').disabled = false;
 
@@ -97,9 +97,10 @@
         log(`File ${file.name} (${data.length} bytes) stored in in-memory FS`);
       });
 
-      document.getElementById('testFileIO').addEventListener('click', async () => {
+      document.getElementById('testMetadata').addEventListener('click', async () => {
         if (!uploadedFilePath) return log("Upload a file first.");
-        const session = new RaptorQSession(1024, 10, 100n, 4n);
+        // symbol_size = 64k, redundancy_factor = 10, max_memory_mb = 1024 (1GB), concurrency_limit = 4
+        const session = new RaptorQSession(65535, 10, 1024n, 4n);
         const outDir = "/output";
         createDirAll(outDir);
 
@@ -118,8 +119,8 @@
 
       document.getElementById('testEncodeDecode').addEventListener('click', async () => {
         if (!uploadedFilePath) return log("Upload a file first.");
-
-        const session = new RaptorQSession(1024, 10, 100n, 4n);
+        // symbol_size = 64k, redundancy_factor = 10, max_memory_mb = 1024 (1GB), concurrency_limit = 4
+        const session = new RaptorQSession(65535, 10, 1024n, 4n);
         const outDir = "/encoded_output";
         const decodedPath = "/decoded_output";
 
