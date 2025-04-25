@@ -64,13 +64,13 @@ fn encode_file_for_decoding(processor: &RaptorQProcessor, input_path: &Path, out
 
 // Helper function to create metadata and return layout file path
 #[allow(dead_code)]
-fn create_metadata_for_benchmarking(processor: &RaptorQProcessor, input_path: &Path, output_dir: &Path, return_layout: bool) -> String {
+fn create_metadata_for_benchmarking(processor: &RaptorQProcessor, input_path: &Path, output_dir: &Path) -> String {
+    let layout_file_path = output_dir.join("_raptorq_layout.json");
     let result = processor
         .create_metadata(
             input_path.to_str().unwrap(),
-            output_dir.to_str().unwrap(),
+            layout_file_path.to_str().unwrap(),
             0, // Let the processor determine block size
-            return_layout,
         )
         .expect("Failed to create metadata");
 
@@ -476,9 +476,8 @@ fn bench_create_metadata_1mb(group: &mut BenchmarkGroup<WallTime>) {
                 processor
                     .create_metadata(
                         input_file.to_str().unwrap(),
-                        output_dir.to_str().unwrap(),
+                        output_dir.join("_raptorq_layout.json").to_str().unwrap(),
                         0, // Let the processor determine block size
-                        false,
                     )
                     .expect("Failed to create metadata");
             });
@@ -521,9 +520,8 @@ fn bench_create_metadata_10mb(group: &mut BenchmarkGroup<WallTime>) {
                 processor
                     .create_metadata(
                         input_file.to_str().unwrap(),
-                        output_dir.to_str().unwrap(),
+                        output_dir.join("_raptorq_layout.json").to_str().unwrap(),
                         0, // Let the processor determine block size
-                        false,
                     )
                     .expect("Failed to create metadata");
             });
@@ -566,9 +564,8 @@ fn bench_create_metadata_100mb(group: &mut BenchmarkGroup<WallTime>) {
                 processor
                     .create_metadata(
                         input_file.to_str().unwrap(),
-                        output_dir.to_str().unwrap(),
+                        output_dir.join("_raptorq_layout.json").to_str().unwrap(),
                         0, // Let the processor determine block size
-                        false,
                     )
                     .expect("Failed to create metadata");
             });
@@ -611,9 +608,8 @@ fn bench_create_metadata_1gb(group: &mut BenchmarkGroup<WallTime>) {
                 processor
                     .create_metadata(
                         input_file.to_str().unwrap(),
-                        output_dir.to_str().unwrap(),
+                        output_dir.join("_raptorq_layout.json").to_str().unwrap(),
                         0, // Let the processor determine block size
-                        false,
                     )
                     .expect("Failed to create metadata");
             });
