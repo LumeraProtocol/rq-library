@@ -6,7 +6,7 @@ This directory contains the static version of the RaptorQ library (`librq_librar
 
 The library files are organized in platform-specific subdirectories following Go's standard naming convention:
 
-```
+```shell
 lib/
 ├── README.md             # This file
 ├── android/              # Android libraries
@@ -47,6 +47,7 @@ To build the static library for your platform, navigate to the root of the Rapto
 ```
 
 The build scripts will automatically:
+
 1. Install any required Rust targets
 2. Build the library for the specified platform(s)
 3. Create the necessary directory structure
@@ -55,6 +56,7 @@ The build scripts will automatically:
 ### Manual Building
 
 If you prefer to build manually, make sure staticlib is in the crate-type list in Cargo.toml:
+
 ```toml
 [lib]
 name = "rq_library"
@@ -62,6 +64,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 ```
 
 Then build for your target and copy to the appropriate directory:
+
 ```bash
 # Build static library (release mode)
 cargo build --release --target <target-triple>

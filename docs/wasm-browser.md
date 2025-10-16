@@ -1,16 +1,20 @@
-# 🧾 Problem Description
+# rq WASM
+
+## 🧾 Problem Description
 
 The core problem is enabling a **WebAssembly (WASM)** build of a Rust-based application to process large input files in the browser **without exhausting memory** or **copying entire files** into JavaScript memory space.
 
 The Rust application uses the [`raptorq`](https://crates.io/crates/raptorq) crate to encode large files (potentially >1GB) into erasure-coded symbols. In native environments, it reads input data from disk using `std::fs::File`, splits the file into **blocks**, and processes each block in sequence to avoid memory overload. The **layout file** (a side output describing all blocks and their symbol metadata) requires knowledge of all encoded blocks.
 
 However, in the **browser**:
+
 - `std::fs::File` and `Path::exists()` are unavailable.
 - Reading entire files into memory via JavaScript leads to **poor UX and potential crashes**.
 - File APIs in browsers are **asynchronous**, whereas Rust code (including `Encoder::new(&[u8])`) is **synchronous**.
 - The WASM build must **not require changes** to the core encoder logic shared with native platforms.
 
 Therefore, we need a solution that:
+
 - Preserves native `std::fs` behavior.
 - Enables chunked streaming reads in the browser.
 - Avoids copying full files into memory.
@@ -18,7 +22,7 @@ Therefore, we need a solution that:
 
 ---
 
-# ✅ Proposed Solution: Trait-Based Platform Abstraction
+## ✅ Proposed Solution: Trait-Based Platform Abstraction
 
 We define a `FileReader` trait with platform-specific implementations. The Rust encoder logic is written against this trait. This enables **native** and **browser** targets to share identical processing logic while hiding the I/O details.
 
