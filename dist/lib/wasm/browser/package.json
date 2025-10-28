@@ -1,0 +1,17 @@
+{
+  "name": "rq-library-wasm",
+  "version": "1.0.2",
+  "description": "WASM build of rq-library for the browser",
+  "main": "index.js",
+  "types": "rq_library.d.ts",
+  "files": [
+    "index.js",
+    "rq_library.js",
+    "rq_library.d.ts",
+    "rq_library_bg.wasm",
+    "rq_library_bg.wasm.d.ts",
+    "snippets/"
+  ],
+  "author": "a-ok123",
+  "license": "ISC"
+}

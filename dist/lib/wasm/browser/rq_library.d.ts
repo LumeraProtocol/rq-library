@@ -11,6 +11,15 @@ export class RaptorQSession {
   static version(): string;
 }
 
+// Filesystem functions (exported from snippets/browser_fs_mem.js)
+export function writeFileChunk(path: string, offset: number, data: Uint8Array): Promise<void>;
+export function readFileChunk(path: string, offset: number, length: number): Promise<Uint8Array>;
+export function getFileSize(path: string): number;
+export function createDirAll(path: string): void;
+export function dirExists(path: string): Promise<boolean>;
+export function syncDirExists(path: string): boolean;
+export function flushFile(path: string): Promise<void>;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {

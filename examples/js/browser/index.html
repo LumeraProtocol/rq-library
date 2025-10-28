@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>RaptorQ WASM Modular Test (In-Memory FS)</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .log-container {
+      border: 1px solid #ccc;
+      padding: 10px;
+      height: 300px;
+      overflow-y: auto;
+      background-color: #f5f5f5;
+      margin-bottom: 20px;
+      font-family: monospace;
+    }
+    button {
+      padding: 8px 16px;
+      margin-right: 10px;
+      margin-bottom: 10px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    .file-input {
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>RaptorQ WASM File I/O Test (Modular + In-Memory)</h1>
+
+  <div class="file-input">
+    <label for="file-upload">Upload a test file:</label>
+    <input type="file" id="file-upload">
+  </div>
+
+  <div>
+    <button id="testDirManager" disabled>Test Directory Manager</button>
+    <button id="testMetadata" disabled>Test Create Metadata</button>
+    <button id="testEncodeDecode" disabled>Test Encode/Decode</button>
+    <button id="clearStorage">Clear Storage</button>
+  </div>
+
+  <h3>Logs:</h3>
+  <div id="logs" class="log-container"></div>
+
+  <script type="module">
+    import wasmUrl from 'rq-library-wasm/rq_library_bg.wasm?url';
+    import initWasm, {
+      RaptorQSession,
+      writeFileChunk,
+      readFileChunk,
+      getFileSize,
+      createDirAll,
+      dirExists,
+      syncDirExists,
+      flushFile
+    } from 'rq-library-wasm';
+
+    const log = (msg) => {
+      const logs = document.getElementById('logs');
+      const entry = document.createElement('div');
+      entry.textContent = msg;
+      logs.appendChild(entry);
+      logs.scrollTop = logs.scrollHeight;
+      console.log(msg);
+    };
+
+    let uploadedFilePath = null;
+    async function getJsonFile(path) {
+      try {
+        const size = getFileSize(path);
+        const bytes = await readFileChunk(path, 0, size);
+        return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+      } catch (error) {
+        console.error('Error reading JSON:', error);
+        return null;
+      }
+    }
+
+    async function setupApp() {
+      log("Initializing WASM...");
+      await initWasm(wasmUrl);
+      log("WASM initialized.");
+
+      document.getElementById('testMetadata').disabled = false;
+      document.getElementById('testDirManager').disabled = false;
+      document.getElementById('testEncodeDecode').disabled = false;
+
+      document.getElementById('file-upload').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const buffer = await file.arrayBuffer();
+        const data = new Uint8Array(buffer);
+        const path = `/${file.name}`;
+        await writeFileChunk(path, 0, data);
+        uploadedFilePath = path;
+        log(`File ${file.name} (${data.length} bytes) stored in in-memory FS`);
+      });
+
+      document.getElementById('testMetadata').addEventListener('click', async () => {
+        if (!uploadedFilePath) return log("Upload a file first.");
+        // symbol_size = 64k, redundancy_factor = 10, max_memory_mb = 1024 (1GB), concurrency_limit = 4
+        const session = new RaptorQSession(65535, 10, 1024n, 4n);
+        const outLayoutFile = "/metadata_layout_file.json";
+        // createDirAll(outDir);
+
+        log("Creating metadata...");
+        const metadata = await session.create_metadata(uploadedFilePath, outLayoutFile, 0);
+        log(`Metadata created: ${JSON.stringify(metadata)}`);
+        const layoutFile = await getJsonFile(outLayoutFile);
+        log(`Layout file: ${JSON.stringify(layoutFile)}`);
+      });
+
+      document.getElementById('testDirManager').addEventListener('click', () => {
+        const testDir = "/test/directory/path";
+        createDirAll(testDir);
+        dirExists(testDir).then((exists) => {
+          log(`Directory ${testDir} exists: ${exists}`);
+        });
+      });
+
+      document.getElementById('testEncodeDecode').addEventListener('click', async () => {
+        if (!uploadedFilePath) return log("Upload a file first.");
+        // symbol_size = 64k, redundancy_factor = 10, max_memory_mb = 1024 (1GB), concurrency_limit = 4
+        const session = new RaptorQSession(65535, 10, 1024n, 4n);
+        const outDir = "/encoded_output";
+        const decodedPath = "/decoded_output";
+
+        createDirAll(outDir);
+        log("Encoding file...");
+        const encodeResult = await session.encode_file(uploadedFilePath, outDir, 0);
+        log(`Encode result: ${JSON.stringify(encodeResult)}`);
+
+        log("Decoding file...");
+        const decodeResult = await session.decode_symbols(
+          encodeResult.symbolsDirectory,
+          decodedPath,
+          encodeResult.layoutFilePath
+        );
+        log(`Decode result: ${JSON.stringify(decodeResult)}`);
+
+        const size = getFileSize(decodedPath);
+        log(`Decoded file size: ${size}`);
+      });
+
+      document.getElementById('clearStorage').addEventListener('click', () => {
+        // Clear in-memory state (just for test)
+        const keys = Object.getOwnPropertyNames(globalThis).filter(k => k.startsWith("mem"));
+        for (const key of keys) {
+          if (globalThis[key]?.clear) globalThis[key].clear();
+        }
+        uploadedFilePath = null;
+        log("In-memory storage cleared.");
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', setupApp);
+  </script>
+</body>
+</html>
