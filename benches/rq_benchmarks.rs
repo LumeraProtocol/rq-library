@@ -64,13 +64,13 @@ fn encode_file_for_decoding(processor: &RaptorQProcessor, input_path: &Path, out
 
 // Helper function to create metadata and return layout file path
 #[allow(dead_code)]
-fn create_metadata_for_benchmarking(processor: &RaptorQProcessor, input_path: &Path, output_dir: &Path, return_layout: bool) -> String {
+fn create_metadata_for_benchmarking(processor: &RaptorQProcessor, input_path: &Path, output_dir: &Path) -> String {
+    let layout_file_path = output_dir.join("_raptorq_layout.json");
     let result = processor
         .create_metadata(
             input_path.to_str().unwrap(),
-            output_dir.to_str().unwrap(),
+            layout_file_path.to_str().unwrap(),
             0, // Let the processor determine block size
-            return_layout,
         )
         .expect("Failed to create metadata");
 
@@ -90,8 +90,11 @@ fn bytes_to_mb_or_gb(bytes: u64) -> String {
 }
 
 // Benchmark encoding a 1MB file
-fn bench_encode_1mb(group: &mut BenchmarkGroup<WallTime>) {
-    let config = ProcessorConfig::default();
+fn bench_encode_1mb(group: &mut BenchmarkGroup<WallTime>, max_memory_mb: u64) {
+    let mut config = ProcessorConfig::default();
+    if max_memory_mb > 0 {
+        config.max_memory_mb = max_memory_mb;
+    }
     let processor = RaptorQProcessor::new(config);
         
     let mut max_allocations = 0;
@@ -135,8 +138,11 @@ fn bench_encode_1mb(group: &mut BenchmarkGroup<WallTime>) {
 }
 
 // Benchmark encoding a 10MB file
-fn bench_encode_10mb(group: &mut BenchmarkGroup<WallTime>) {
-    let config = ProcessorConfig::default();
+fn bench_encode_10mb(group: &mut BenchmarkGroup<WallTime>, max_memory_mb: u64) {
+    let mut config = ProcessorConfig::default();
+    if max_memory_mb > 0 {
+        config.max_memory_mb = max_memory_mb;
+    }
     let processor = RaptorQProcessor::new(config);
     
     let mut max_allocations = 0;
@@ -180,8 +186,11 @@ fn bench_encode_10mb(group: &mut BenchmarkGroup<WallTime>) {
 }
 
 // Benchmark encoding a 100MB file
-fn bench_encode_100mb(group: &mut BenchmarkGroup<WallTime>) {
-    let config = ProcessorConfig::default();
+fn bench_encode_100mb(group: &mut BenchmarkGroup<WallTime>, max_memory_mb: u64) {
+    let mut config = ProcessorConfig::default();
+    if max_memory_mb > 0 {
+        config.max_memory_mb = max_memory_mb;
+    }
     let processor = RaptorQProcessor::new(config);
     
     let mut max_allocations = 0;
@@ -225,8 +234,11 @@ fn bench_encode_100mb(group: &mut BenchmarkGroup<WallTime>) {
 }
 
 // Benchmark encoding a 1GB file
-fn bench_encode_1gb(group: &mut BenchmarkGroup<WallTime>) {
-    let config = ProcessorConfig::default();
+fn bench_encode_1gb(group: &mut BenchmarkGroup<WallTime>, max_memory_mb: u64) {
+    let mut config = ProcessorConfig::default();
+    if max_memory_mb > 0 {
+        config.max_memory_mb = max_memory_mb;
+    }
     let processor = RaptorQProcessor::new(config);
     
     let mut max_allocations = 0;
@@ -234,8 +246,14 @@ fn bench_encode_1gb(group: &mut BenchmarkGroup<WallTime>) {
     let mut total_allocations = 0;
     let mut total_bytes = 0;
     let mut counter = 0;
-    
-    group.bench_function("encode_1gb", |b| {
+
+    let group_name = if max_memory_mb > 0 {
+        format!("encode_1gb_max_memory_{}mb", max_memory_mb)
+    } else {
+        "encode_1gb_default".to_string()
+    };
+
+    group.bench_function(group_name, |b| {
         // Set up environment fresh for each iteration
         let (temp_dir, input_file, output_dir) = setup_test_env(SIZE_1GB);
         
@@ -476,9 +494,8 @@ fn bench_create_metadata_1mb(group: &mut BenchmarkGroup<WallTime>) {
                 processor
                     .create_metadata(
                         input_file.to_str().unwrap(),
-                        output_dir.to_str().unwrap(),
+                        output_dir.join("_raptorq_layout.json").to_str().unwrap(),
                         0, // Let the processor determine block size
-                        false,
                     )
                     .expect("Failed to create metadata");
             });
@@ -521,9 +538,8 @@ fn bench_create_metadata_10mb(group: &mut BenchmarkGroup<WallTime>) {
                 processor
                     .create_metadata(
                         input_file.to_str().unwrap(),
-                        output_dir.to_str().unwrap(),
+                        output_dir.join("_raptorq_layout.json").to_str().unwrap(),
                         0, // Let the processor determine block size
-                        false,
                     )
                     .expect("Failed to create metadata");
             });
@@ -566,9 +582,8 @@ fn bench_create_metadata_100mb(group: &mut BenchmarkGroup<WallTime>) {
                 processor
                     .create_metadata(
                         input_file.to_str().unwrap(),
-                        output_dir.to_str().unwrap(),
+                        output_dir.join("_raptorq_layout.json").to_str().unwrap(),
                         0, // Let the processor determine block size
-                        false,
                     )
                     .expect("Failed to create metadata");
             });
@@ -611,9 +626,8 @@ fn bench_create_metadata_1gb(group: &mut BenchmarkGroup<WallTime>) {
                 processor
                     .create_metadata(
                         input_file.to_str().unwrap(),
-                        output_dir.to_str().unwrap(),
+                        output_dir.join("_raptorq_layout.json").to_str().unwrap(),
                         0, // Let the processor determine block size
-                        false,
                     )
                     .expect("Failed to create metadata");
             });
@@ -643,24 +657,43 @@ fn encoding_benchmarks(c: &mut Criterion) {
 
     // group.measurement_time(Duration::from_secs(5));  <-- this is default
     // group.sample_size(100);                          <-- this is default
-    bench_encode_1mb(&mut group);
-    println!();
+    // bench_encode_1mb(&mut group, 0);
+    // println!();
+    //
+    // group.measurement_time(Duration::from_secs(40));
+    // group.sample_size(100);
+    // bench_encode_10mb(&mut group, 0);
+    // println!();
+    //
+    // group.measurement_time(Duration::from_secs(300));
+    // group.sample_size(50);
+    // bench_encode_100mb(&mut group, 0);
+    // println!();
 
-    group.measurement_time(Duration::from_secs(40));
-    group.sample_size(100);
-    bench_encode_10mb(&mut group);
-    println!();
-
-    group.measurement_time(Duration::from_secs(300));
-    group.sample_size(50);
-    bench_encode_100mb(&mut group);
-    println!();
-
+    println!("max memory is 16GB (default)");
     group.measurement_time(Duration::from_secs(1000));
     group.sample_size(10);
-    bench_encode_1gb(&mut group);
+    bench_encode_1gb(&mut group, 0);
     println!();
-    
+
+    println!("max memory is 8GB");
+    group.measurement_time(Duration::from_secs(1000));
+    group.sample_size(10);
+    bench_encode_1gb(&mut group, 8);
+    println!();
+
+    println!("max memory is 4GB");
+    group.measurement_time(Duration::from_secs(1000));
+    group.sample_size(10);
+    bench_encode_1gb(&mut group, 4);
+    println!();
+
+    println!("max memory is 2GB");
+    group.measurement_time(Duration::from_secs(1000));
+    group.sample_size(10);
+    bench_encode_1gb(&mut group, 2);
+    println!();
+
     group.finish();
 }
 
@@ -719,5 +752,6 @@ fn metadata_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, encoding_benchmarks, decoding_benchmarks, metadata_benchmarks);
+// criterion_group!(benches, encoding_benchmarks, decoding_benchmarks, metadata_benchmarks);
+criterion_group!(benches, encoding_benchmarks);
 criterion_main!(benches);

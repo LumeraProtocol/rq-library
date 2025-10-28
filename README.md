@@ -6,13 +6,15 @@
 cargo build --release
 ```
 
-This will build the native library in release mode for DEFAULT target.<br/> 
+This will build the native library in release mode for DEFAULT target.<br/>
 The library will be located in:
+
 * `target/release/lib<name>.so` on Linux
 * `target/release/lib<name>.dylib` on macOS
 * `target/release/<name>.dll` on Windows.
 
 To verify default target
+
 ```bash
 rustc -vV | grep host
 ```
@@ -26,6 +28,7 @@ rustc -vV | grep host
 ## Non-native targets
 
 Following is a list of supported targets on different platforms:
+
 * macOS
   * iOS
   * macOS Intel
@@ -42,64 +45,81 @@ Following is a list of supported targets on different platforms:
   * Windows
 
 ### Building targets
+
 > drop the `--release` flag for debug builds
 
-#### macOS - Intel
+#### MacOS - Intel
+
 ```bash
 cargo build --target x86_64-apple-darwin --release
 ```
 
-#### macOS - Apple Silicon
+#### MacOS - Apple Silicon
+
 ```bash
 cargo build --target aarch64-apple-darwin --release
 ```
 
 #### iOS
+
 ```bash
 cargo build --target aarch64-apple-ios --release
 ```
 
 #### Linux - for dynamic linking
+
 ```bash
 cargo build --target x86_64-unknown-linux-gnu --release
 ```
 
 #### Linux - for static linking
+
 ```bash
 cargo build --target x86_64-unknown-linux-musl --release
 ```
 
 #### Android
+
 ```bash
 cargo build --target aarch64-linux-android --release
 ```
 
 #### Windows
+
 ```bash
 cargo build --target x86_64-pc-windows-gnu --release
 ```
+
+OR
+
 ```bash
 cargo build --target x86_64-pc-windows-msvc --release
 ```
-
 
 ### WIP!!! - Cross Compilation with Zig
 
 Install `Zig`
 
 #### MacOS
+
 ```bash
 brew install zig
 ```
+
 #### Windows
+
 ```bash
 winget install -e --id zig.zig
 ```
+
 #### Linux
+
 ```bash
 sudo apt install zig
 ```
+
 #### Check installation
+
 ```bash
 zig version
 ```
